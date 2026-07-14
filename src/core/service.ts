@@ -1,13 +1,32 @@
 import type {
+  AckInput,
+  AckOutput,
   AgentView,
+  CallInput,
+  CallOutput,
   CheckinInput,
   CheckinOutput,
+  ListenInput,
+  ListenOutput,
+  MessageView,
   PhonebookOutput,
   RegisterInput,
   RegisterOutput,
+  SendInput,
+  SendOutput,
+  ThreadView,
 } from './contracts.js'
 import { PhoneError } from './errors.js'
-import type { AgentRecord, Clock, Emitter, Store, Surface } from './ports.js'
+import { DELIVERY_BATCH_LIMIT } from './ports.js'
+import type {
+  AgentRecord,
+  Clock,
+  Emitter,
+  MessageRecord,
+  Store,
+  Surface,
+  ThreadRecord,
+} from './ports.js'
 import { hashSecret, newToken } from './tokens.js'
 import { Waiters } from './waiters.js'
 
@@ -141,5 +160,170 @@ export class PhoneService {
         listening: this.waiters.isListening(a.name),
       })),
     }))
+  }
+
+  // --- conversations ---
+  call(ctx: CallCtx, input: CallInput): Promise<CallOutput> {
+    return this.op('call', ctx.surface, ctx.agent, (ev) => {
+      if (input.to === ctx.agent) throw new PhoneError('VALIDATION_ERROR', 'cannot call yourself')
+      if (!this.store.getAgent(input.to)) {
+        throw new PhoneError('NOT_FOUND', `unknown agent "${input.to}"`)
+      }
+      const now = this.clock.now()
+      const threadId = this.store.insertThread({
+        subject: input.subject,
+        participantA: ctx.agent,
+        participantB: input.to,
+        openedBy: ctx.agent,
+        status: 'open',
+        endedBy: null,
+        endNote: null,
+        openedAt: now,
+        endedAt: null,
+        lastActivityAt: now,
+      })
+      ev.threadId = threadId
+      let message: MessageView | null = null
+      if (input.body !== undefined) {
+        const id = this.store.insertMessage({
+          threadId,
+          sender: ctx.agent,
+          recipient: input.to,
+          body: input.body,
+          kind: 'message',
+          createdAt: now,
+        })
+        ev.messageId = id
+        this.waiters.notify(input.to)
+        message = {
+          id,
+          threadId,
+          sender: ctx.agent,
+          recipient: input.to,
+          body: input.body,
+          kind: 'message',
+          createdAt: now,
+        }
+      }
+      const thread = this.store.getThread(threadId)
+      if (!thread) throw new PhoneError('INTERNAL', 'thread vanished after insert')
+      return { thread: this.toThreadView(thread), message }
+    })
+  }
+
+  send(ctx: CallCtx, input: SendInput): Promise<SendOutput> {
+    return this.op('send', ctx.surface, ctx.agent, (ev) => {
+      const thread = this.requireParticipant(input.threadId, ctx.agent)
+      const now = this.clock.now()
+      const recipient = this.otherParticipant(thread, ctx.agent)
+      const id = this.store.insertMessage({
+        threadId: thread.id,
+        sender: ctx.agent,
+        recipient,
+        body: input.body,
+        kind: 'message',
+        createdAt: now,
+      })
+      // reopen-on-send: sending always makes the thread open again (design: status is advisory)
+      this.store.updateThread({
+        ...thread,
+        status: 'open',
+        endedBy: null,
+        endNote: null,
+        endedAt: null,
+        lastActivityAt: now,
+      })
+      this.waiters.notify(recipient)
+      ev.threadId = thread.id
+      ev.messageId = id
+      return {
+        message: this.toMessageView({
+          id,
+          threadId: thread.id,
+          sender: ctx.agent,
+          recipient,
+          body: input.body,
+          kind: 'message',
+          createdAt: now,
+        }),
+      }
+    })
+  }
+
+  // --- delivery ---
+  listen(ctx: CallCtx, input: ListenInput): Promise<ListenOutput> {
+    return this.op('listen', ctx.surface, ctx.agent, async (ev) => {
+      // wall-clock window: Waiters uses real timers; the injected Clock is domain time only
+      const startedAt = Date.now()
+      for (;;) {
+        const cursor = this.store.getCursor(ctx.agent)
+        const records = this.store.listUnacked(ctx.agent, cursor, DELIVERY_BATCH_LIMIT)
+        const elapsed = Date.now() - startedAt
+        if (records.length > 0 || elapsed >= input.waitMs) {
+          ev.deliveredCount = records.length
+          ev.waitedMs = elapsed
+          const last = records[records.length - 1]
+          return {
+            messages: records.map((m) => this.toMessageView(m)),
+            cursor: last ? last.id : cursor,
+          }
+        }
+        await this.waiters.wait(ctx.agent, input.waitMs - elapsed)
+      }
+    })
+  }
+
+  ack(ctx: CallCtx, input: AckInput): Promise<AckOutput> {
+    return this.op('ack', ctx.surface, ctx.agent, () => {
+      const current = this.store.getCursor(ctx.agent)
+      const cap = this.store.maxMessageId()
+      const next = Math.max(current, Math.min(input.throughMessageId, cap))
+      this.store.setCursor(ctx.agent, next)
+      return { ackedThroughMessageId: next }
+    })
+  }
+
+  // --- view/guard helpers ---
+  private effectiveStatus(t: ThreadRecord): 'open' | 'ended' {
+    if (t.status === 'ended') return 'ended'
+    return this.clock.now() - t.lastActivityAt > this.ttlMs ? 'ended' : 'open'
+  }
+
+  private toThreadView(t: ThreadRecord): ThreadView {
+    return {
+      id: t.id,
+      subject: t.subject,
+      participants: [t.participantA, t.participantB],
+      openedBy: t.openedBy,
+      status: this.effectiveStatus(t),
+      endedBy: t.endedBy,
+      endNote: t.endNote,
+      openedAt: t.openedAt,
+      lastActivityAt: t.lastActivityAt,
+    }
+  }
+
+  private toMessageView(m: MessageRecord): MessageView {
+    return {
+      id: m.id,
+      threadId: m.threadId,
+      sender: m.sender,
+      recipient: m.recipient,
+      body: m.body,
+      kind: m.kind,
+      createdAt: m.createdAt,
+    }
+  }
+
+  private requireParticipant(threadId: number, agent: string): ThreadRecord {
+    const thread = this.store.getThread(threadId)
+    if (!thread || (thread.participantA !== agent && thread.participantB !== agent)) {
+      throw new PhoneError('NOT_FOUND', `no thread #${threadId} for agent "${agent}"`)
+    }
+    return thread
+  }
+
+  private otherParticipant(t: ThreadRecord, agent: string): string {
+    return t.participantA === agent ? t.participantB : t.participantA
   }
 }
