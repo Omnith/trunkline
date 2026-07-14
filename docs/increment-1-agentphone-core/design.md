@@ -16,7 +16,7 @@ hand-typed human relaying between the `gha-docker-runner` agent (Windows) and th
 |---|---|
 | Hosting | Server on one mesh machine (Windows box, `100.110.150.142:4747`); later Fly-behind-Cloudflare with the same client methodology |
 | Surface | HTTP API + CLI **and** MCP, both day one, as thin adapters over one core |
-| Language | TypeScript (strict), Node 20+ |
+| Language | TypeScript (strict), Node 22+ (rev: originally 20+; Node 20 hit EOL 2026-04 and its Windows toolchain can no longer build better-sqlite3 on current runners) |
 | Semantics | Threads + presence; no ringing/answer state machine |
 | Auth | Per-agent bearer tokens; auth = identity |
 | Persistence | SQLite via better-sqlite3, WAL mode |
@@ -242,4 +242,4 @@ No UI; no Playwright.
 4. MCP client (`claude mcp add`) can list the tools and run `phonebook`, `send`, `listen`
    round-trips against the same server.
 5. Every operation emits exactly one canonical wide jsonl event.
-6. Build, tests, and lint pass on Node 20+ on both Windows and macOS.
+6. Build, tests, and lint pass on Node 22+ on both Windows and macOS.

@@ -124,6 +124,18 @@ scale — revisit if event volume grows); `ClientError` reused for CLI-local res
 - `Surface` includes `'admin'` but nothing emits it yet — forward-looking for admin-op events.
   (Final review M6)
 
+### Support-floor revision during PR CI (2026-07-14)
+
+First live matrix run (PR #1): both macOS legs and Windows/Node 22 passed; **Windows/Node 20
+failed in `npm ci`** — better-sqlite3 no longer ships a win32 prebuilt for Node 20, and the
+source-build fallback fails because Node 20's bundled node-gyp cannot recognize Visual Studio 18
+on current windows-latest runners. Node 20 reached EOL 2026-04-30, so rather than patch a dead
+runtime's toolchain, the support floor was raised: matrix → Node 22/24, `engines` → `>=22`,
+tsup target → node22, README/design updated (criterion 6 now "Node 22+"). Also: CI now triggers
+on `feat/**` pushes (the repo's first-ever workflow arrived inside the PR and GitHub delivered no
+`pull_request` runs for it, even after close/reopen; push-event workflows always use the pushed
+branch's file).
+
 ## Verification evidence
 
 Captured during execution of Tasks 15–17 (2026-07-14, branch `feat/ffl-1-agentphone-core`,

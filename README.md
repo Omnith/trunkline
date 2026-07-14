@@ -119,4 +119,4 @@ npm run typecheck && npm run lint
 npm run build      # tsup -> dist/agentphone.js
 ```
 
-Node ≥ 20. CI runs the full gate matrix on Windows and macOS.
+Node ≥ 22. CI runs the full gate matrix on Windows and macOS.
