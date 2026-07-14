@@ -63,7 +63,7 @@ export const CallOutputSchema = z.object({
 })
 
 export const SendInputSchema = z.object({
-  threadId: z.number().int(),
+  threadId: z.number().int().positive(),
   body: MessageBodySchema,
 })
 export const SendOutputSchema = z.object({ message: MessageViewSchema })
@@ -82,7 +82,7 @@ export const AckInputSchema = z.object({ throughMessageId: z.number().int().min(
 export const AckOutputSchema = z.object({ ackedThroughMessageId: z.number().int() })
 
 export const HistoryInputSchema = z.object({
-  threadId: z.number().int(),
+  threadId: z.number().int().positive(),
   afterId: z.number().int().default(0),
   limit: z.number().int().min(1).max(500).default(100),
 })
@@ -94,7 +94,7 @@ export const ThreadsInputSchema = z.object({
 export const ThreadsOutputSchema = z.object({ threads: z.array(ThreadViewSchema) })
 
 export const HangupInputSchema = z.object({
-  threadId: z.number().int(),
+  threadId: z.number().int().positive(),
   note: z.string().max(2000).optional(),
 })
 export const HangupOutputSchema = z.object({ thread: ThreadViewSchema })

@@ -120,7 +120,8 @@ tokens by indexed hash lookup (the raw token is never compared directly).
 Errors: single shape `{ error: { code, message, details? } }` with conventional statuses
 (401 bad token, 404 unknown thread or recipient, 409 name already taken, 410 invite expired
 or used, 413 payload too large, 422 validation). Boundary rejections (validation, oversized
-bodies) emit a canonical event too, so every request yields exactly one event.
+bodies) emit a canonical event too, so every verb request yields exactly one event (liveness
+pings to /api/health and unmatched-route 404s are not operations and emit none).
 
 ### MCP
 

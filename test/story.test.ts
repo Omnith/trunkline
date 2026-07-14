@@ -80,7 +80,9 @@ describe('the whole story', () => {
     const lines = readFileSync(cfg.eventsPath, 'utf8').trim().split('\n')
     expect(lines.length).toBeGreaterThan(5)
     const parsed = lines.map((l) => JSON.parse(l) as { op: string; outcome: string })
-    expect(parsed.every((e) => typeof e.op === 'string' && typeof e.outcome === 'string')).toBe(true)
+    expect(parsed.every((e) => typeof e.op === 'string' && typeof e.outcome === 'string')).toBe(
+      true,
+    )
 
     await running.close()
   })

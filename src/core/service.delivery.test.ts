@@ -96,6 +96,21 @@ describe('listen long-poll', () => {
     expect(out.cursor).toBe(before)
   })
 
+  test('a single listen delivers at most 500 messages; the remainder arrives after ack', async () => {
+    const h = twoAgents()
+    const { thread } = await h.service.call(gha, { to: 'volumi', subject: 'flood' })
+    for (let i = 1; i <= 501; i++) {
+      await h.service.send(gha, { threadId: thread.id, body: `m${i}` })
+    }
+    const first = await h.service.listen(vol, { waitMs: 0 })
+    expect(first.messages).toHaveLength(500)
+    expect(first.messages.at(-1)?.body).toBe('m500')
+    expect(first.cursor).toBe(first.messages.at(-1)?.id)
+    await h.service.ack(vol, { throughMessageId: first.cursor })
+    const second = await h.service.listen(vol, { waitMs: 0 })
+    expect(second.messages.map((m) => m.body)).toEqual(['m501'])
+  })
+
   test('phonebook reports listening=true while a listen is parked', async () => {
     const h = twoAgents()
     const parked = h.service.listen(vol, { waitMs: 400 })

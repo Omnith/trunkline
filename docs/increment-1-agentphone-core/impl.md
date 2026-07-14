@@ -81,11 +81,29 @@ scale — revisit if event volume grows); `ClientError` reused for CLI-local res
     M5 `McpHandler` carries `service` although the composition root could close over it — seam
     judged non-leaky; revisit if a third surface appears.
 
+### Final holistic review (2026-07-14, whole increment, commits 3f8624e..2335ec4)
+
+- Verdict: **READY FOR PR.** No Critical/Important findings. All six acceptance criteria verified
+  with named evidence; criterion 6's macOS leg is an honest pre-push gap (CI matrix exists,
+  executes on first push; better-sqlite3 ships macOS prebuilds).
+- Minors folded in before PR: M1 `.positive()` on `threadId` in Send/History/Hangup input schemas
+  (unifies HTTP/MCP rejection of non-positive ids); M2 service-level test pinning the 500-message
+  delivery batch cap + drain-after-ack; M3 design wording ("every verb request emits exactly one
+  event"; health/404 are not operations); M5 README ring note (transient server outage mid-listen
+  exits 1; nothing lost, re-run listen).
+- Deferred (below): M4 parked waiter not released on client disconnect; M6 unused 'admin' surface
+  value.
+
 ## Deferred debt
 
 - `JsonlEmitter` synchronous append on the request path — acceptable now, swap to buffered/async
   sink if agent count or event volume grows.
 - No retention/pruning story for `messages`/events jsonl (explicit non-goal this increment).
+- A parked long-poll waiter is not released when the listening client disconnects; it lives out
+  its ≤60s window (phonebook `listening` can briefly read true for a gone agent; harmless at
+  two-agent scale). Wire an abort hook if listen fan-out grows. (Final review M4)
+- `Surface` includes `'admin'` but nothing emits it yet — forward-looking for admin-op events.
+  (Final review M6)
 
 ## Verification evidence
 

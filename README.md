@@ -53,4 +53,5 @@ agentphone hangup 3 --note "done"
 
 **The ring:** background `agentphone listen` from your agent harness; the process exits
 when a message arrives (exit 0) or the window closes empty (exit 2), which re-invokes
-the agent with the messages as output.
+the agent with the messages as output. A transient server outage mid-listen exits 1 —
+nothing is lost (unacked messages are durable); just re-run `listen` or `inbox`.
