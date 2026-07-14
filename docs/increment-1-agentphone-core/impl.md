@@ -44,6 +44,25 @@ documented as contract; `JsonlEmitter` uses `appendFileSync` on the hot path (fi
 scale — revisit if event volume grows); `ClientError` reused for CLI-local resolution errors
 (naming nit); design "constant-time compare" wording corrected to hash-lookup.
 
+### Phase 1 checkpoint (2026-07-14, parallel spec-conformance + code-quality reviewers, commits 9685424..0899a1d)
+
+- Spec-conformance: ✅ compliant, no findings at any severity. All four gates independently re-run
+  and genuinely green (34 tests); dependency DAG verified inward-only from actual imports; subtle
+  contracts (cursor semantics, wall-clock long-poll, reopen-on-send, lazy TTL, invite single-use,
+  one-event-per-op, ack idempotence + cap) spot-checked line by line.
+- Code-quality: APPROVE. Zero Critical/Important. Five Minor items; pull-forward cleanup applied
+  for two (hoisted double `clock.now()` in `authenticate`; shared `HOUR_MS` constant replacing
+  duplicated 24h magic numbers). Remaining Minors accepted as-is: `call`'s extra `getThread`
+  re-read (harmless), slight invite-expiry test overlap (distinct code paths), see ack note below.
+- **Load-bearing note for CLI work (Task 13+):** `ack` clamps to the *global* `maxMessageId()`,
+  which does not protect a client that acks a too-high id from skipping unseen lower-id voicemail.
+  Any ack sugar (`ack --all`) MUST derive its value from the delivery cursor returned by
+  `listen`/`inbox` (`ListenOutput.cursor`) — never from a global max. The plan's `ackAll` already
+  does this; keep it that way.
+- Implementer reports of the rtk proxy masking exit codes were probed by the spec reviewer and NOT
+  reproduced (a forced eslint failure propagated exit 2). Direct-command verification retained as
+  practice regardless.
+
 ## Deferred debt
 
 - `JsonlEmitter` synchronous append on the request path — acceptable now, swap to buffered/async

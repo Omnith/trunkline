@@ -7,6 +7,8 @@ export type Surface = 'http' | 'mcp' | 'admin'
 // a single listen/inbox delivers at most this many messages (stated contract; see design.md)
 export const DELIVERY_BATCH_LIMIT = 500
 
+export const HOUR_MS = 3600_000
+
 export interface PhoneEvent {
   ts: number
   op: string

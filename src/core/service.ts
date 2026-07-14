@@ -23,7 +23,7 @@ import type {
   ThreadView,
 } from './contracts.js'
 import { PhoneError } from './errors.js'
-import { DELIVERY_BATCH_LIMIT } from './ports.js'
+import { DELIVERY_BATCH_LIMIT, HOUR_MS } from './ports.js'
 import type {
   AgentRecord,
   Clock,
@@ -41,7 +41,7 @@ export interface CallCtx {
   surface: Surface
 }
 
-const DEFAULT_TTL_MS = 24 * 3600_000
+const DEFAULT_TTL_MS = 24 * HOUR_MS
 
 type EventFields = {
   waitedMs?: number
@@ -101,8 +101,9 @@ export class PhoneService {
     if (token !== undefined) {
       const agent = this.store.getAgentByTokenHash(hashSecret(token))
       if (agent) {
-        this.store.touchAgent(agent.name, this.clock.now())
-        return { ...agent, lastSeenAt: this.clock.now() }
+        const now = this.clock.now()
+        this.store.touchAgent(agent.name, now)
+        return { ...agent, lastSeenAt: now }
       }
     }
     this.emitter.emit({

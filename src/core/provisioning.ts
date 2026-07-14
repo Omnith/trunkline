@@ -1,4 +1,5 @@
 import type { AgentRecord, AgentStore, Clock, InviteStore } from './ports.js'
+import { HOUR_MS } from './ports.js'
 import { hashSecret, newInviteCode, newToken } from './tokens.js'
 
 export function createInvite(
@@ -7,7 +8,7 @@ export function createInvite(
   opts: { pinnedName?: string; ttlHours?: number },
 ): { code: string; expiresAt: number } {
   const code = newInviteCode()
-  const expiresAt = clock.now() + (opts.ttlHours ?? 24) * 3600_000
+  const expiresAt = clock.now() + (opts.ttlHours ?? 24) * HOUR_MS
   store.insertInvite({
     codeHash: hashSecret(code),
     pinnedName: opts.pinnedName ?? null,
