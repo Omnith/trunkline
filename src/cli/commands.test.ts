@@ -55,6 +55,14 @@ describe('resolvePeerThread', () => {
     const threads = [threadView(1, 'ci', 'open'), threadView(2, 'infra', 'open')]
     expect(() => resolvePeerThread(threads, 'volumi')).toThrow(/#1.*#2/s)
   })
+  test('falls back to the most recent ended thread when no open call exists (late reply reopens)', () => {
+    const threads = [
+      threadView(9, 'newest-ended', 'ended'),
+      threadView(4, 'older-ended', 'ended'),
+      threadView(3, 'other-peer-open', 'open', ['gha-docker-runner', 'lab7']),
+    ]
+    expect(resolvePeerThread(threads, 'volumi')).toBe(9)
+  })
 })
 
 describe('listenCommand', () => {
@@ -138,12 +146,25 @@ describe('sendTo', () => {
     expect(out.message.id).toBe(9)
   })
 
-  test('propagates resolution errors (no open thread)', async () => {
+  test('propagates resolution errors (no thread at all)', async () => {
     const client: SendToClient = {
       threads: () => Promise.resolve({ threads: [] }),
       send: () => Promise.reject(new Error('should not send')),
     }
     await expect(sendTo(client, 'volumi', 'x')).rejects.toThrow(/no open thread/)
+  })
+
+  test('reaches an ended call when no open one exists (reopen-on-send)', async () => {
+    const sent: Array<{ threadId: number; body: string }> = []
+    const client: SendToClient = {
+      threads: () => Promise.resolve({ threads: [threadView(7, 'done', 'ended')] }),
+      send: (input) => {
+        sent.push(input)
+        return Promise.resolve({ message: msg(11, input.body) })
+      },
+    }
+    await sendTo(client, 'volumi', 'one more thing')
+    expect(sent).toEqual([{ threadId: 7, body: 'one more thing' }])
   })
 })
 

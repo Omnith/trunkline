@@ -50,8 +50,7 @@ program
       fail,
     )
     out(`registered "${res.name}"`)
-    out(`token (shown once - store it): ${res.token}`)
-    out(`set AGENTPHONE_TOKEN=${res.token}`)
+    out(`token (shown once - store it as AGENTPHONE_TOKEN): ${res.token}`)
   })
 
 program

@@ -75,20 +75,25 @@ export async function listenCommand(
 }
 
 export function resolvePeerThread(threads: ThreadView[], peer: string): number {
-  const open = threads.filter((t) => t.status === 'open' && t.participants.includes(peer))
+  const withPeer = threads.filter((t) => t.participants.includes(peer))
+  const open = withPeer.filter((t) => t.status === 'open')
   const first = open[0]
   if (open.length === 1 && first) return first.id
-  if (open.length === 0) {
+  if (open.length > 1) {
     throw new ClientError(
-      'NO_OPEN_THREAD',
-      `no open thread with "${peer}" - start one: agentphone call ${peer} --subject "..."`,
+      'AMBIGUOUS_THREAD',
+      `multiple open threads with "${peer}": ${open
+        .map((t) => `#${t.id} "${t.subject}"`)
+        .join(', ')} - use --thread <id>`,
     )
   }
+  // no open call: a late reply into the most recent ended call reopens it server-side
+  // (the server lists threads newest-activity-first)
+  const recentEnded = withPeer[0]
+  if (recentEnded) return recentEnded.id
   throw new ClientError(
-    'AMBIGUOUS_THREAD',
-    `multiple open threads with "${peer}": ${open
-      .map((t) => `#${t.id} "${t.subject}"`)
-      .join(', ')} - use --thread <id>`,
+    'NO_OPEN_THREAD',
+    `no open thread with "${peer}" - start one: agentphone call ${peer} --subject "..."`,
   )
 }
 
@@ -97,7 +102,7 @@ export async function sendTo(
   peer: string,
   body: string,
 ): Promise<SendOutput> {
-  const { threads } = await client.threads('open')
+  const { threads } = await client.threads('all')
   const threadId = resolvePeerThread(threads, peer)
   return client.send({ threadId, body })
 }
