@@ -16,7 +16,7 @@ hand-typed human relaying between the `gha-docker-runner` agent (Windows) and th
 |---|---|
 | Hosting | Server on one mesh machine (Windows box, `100.110.150.142:4747`); later Fly-behind-Cloudflare with the same client methodology |
 | Surface | HTTP API + CLI **and** MCP, both day one, as thin adapters over one core |
-| Language | TypeScript (strict), Node 20+ |
+| Language | TypeScript (strict), Node 22+ (rev: originally 20+; Node 20 hit EOL 2026-04 and its Windows toolchain can no longer build better-sqlite3 on current runners) |
 | Semantics | Threads + presence; no ringing/answer state machine |
 | Auth | Per-agent bearer tokens; auth = identity |
 | Persistence | SQLite via better-sqlite3, WAL mode |
@@ -120,7 +120,8 @@ tokens by indexed hash lookup (the raw token is never compared directly).
 Errors: single shape `{ error: { code, message, details? } }` with conventional statuses
 (401 bad token, 404 unknown thread or recipient, 409 name already taken, 410 invite expired
 or used, 413 payload too large, 422 validation). Boundary rejections (validation, oversized
-bodies) emit a canonical event too, so every request yields exactly one event.
+bodies) emit a canonical event too, so every verb request yields exactly one event (liveness
+pings to /api/health and unmatched-route 404s are not operations and emit none).
 
 ### MCP
 
@@ -142,7 +143,9 @@ agentphone phonebook
 agentphone call <agent> --subject "..." [-m "..."]
 agentphone send --thread <id> -m "..."
 agentphone send --to <agent> -m "..."    # sugar: resolves your single open thread with that
-                                         # peer; errors listing candidates if ambiguous
+                                         # peer, or your most recent ended one if none is open
+                                         # (reopen-on-send); errors listing candidates when
+                                         # multiple are open
 agentphone listen [--wait 3600] [--ack]  # THE RING: loops ≤60s long-polls internally,
                                          # exits when messages arrive (background this)
 agentphone inbox
@@ -239,4 +242,4 @@ No UI; no Playwright.
 4. MCP client (`claude mcp add`) can list the tools and run `phonebook`, `send`, `listen`
    round-trips against the same server.
 5. Every operation emits exactly one canonical wide jsonl event.
-6. Build, tests, and lint pass on Node 20+ on both Windows and macOS.
+6. Build, tests, and lint pass on Node 22+ on both Windows and macOS.
