@@ -89,4 +89,36 @@ scale — revisit if event volume grows); `ClientError` reused for CLI-local res
 
 ## Verification evidence
 
-(final build/test/lint output summary, story-test result, both-OS CI runs — filled during execution)
+Captured during execution of Tasks 15–17 (2026-07-14, branch `feat/ffl-1-agentphone-core`,
+Windows host, Node local toolchain). All gates run as direct commands with real exit codes.
+
+- **`npm run build`** — exit 0. tsup ESM build success; artifact `dist/agentphone.js` (41.47 KB,
+  sourcemap 89.97 KB), target node20.
+- **`npm run typecheck`** — `tsc --noEmit`, exit 0, no diagnostics.
+- **`npm run lint`** — `eslint . && prettier --check .`, exit 0 ("ESLint: No issues found";
+  prettier check passed).
+- **`npm test`** — `vitest run`, exit 0. 14 test files, **67 tests passed** (up from 66: the new
+  end-to-end story test). Includes `test/story.test.ts` (the whole story) and `test/mcp.test.ts`.
+- **Story test (Task 15)** — `npx vitest run test/story.test.ts` → PASS (1/1, ~350 ms). Exercises
+  register → parked listen wakes on call → ack → voicemail while not listening → **server restart
+  with unacked voicemail surviving** (SqliteStore persistence) → ack → hangup emits a system message
+  → wrong-token 401 on `/api/agents` → canonical `op`/`outcome` events written as jsonl.
+- **Built-CLI smoke (Task 17, exit-code contract)** — against `dist/agentphone.js` on port 47470
+  with a temp DB/events file: `admin invite` minted a single-use code; `serve` came up
+  ("agentphone listening on 127.0.0.1:47470"); `register --name smoke-test` printed a one-time
+  `ap_…` token; **`listen --wait 1` printed "no messages (listen timed out)" and exited with code 2**
+  (timeout, nothing to deliver — the empty-window ring contract). Serve stopped, temp DB/events
+  files removed afterward.
+- **CI matrix (Task 16)** — `.github/workflows/ci.yml` added: `windows-latest` × `macos-latest`,
+  Node 20 & 22, running `npm ci` → build → typecheck → lint → test. Actual cross-OS runs execute on
+  push to `main` / pull_request (GitHub Actions) — not runnable on the local host; wiring verified by
+  inspection only.
+
+### Execution deviations (Tasks 15–17)
+
+- Smoke test wrote its temp DB/events to a scratchpad subdirectory rather than literally
+  `$env:TEMP` — location-only deviation, behavior identical; artifacts deleted after the run.
+- No production code changed in this batch: Task 15 pins existing behavior (characterization test
+  over the already-complete Tasks 1–14 stack), so it passed on first run rather than red→green. The
+  test asserts only public-interface behavior (client methods, HTTP 401, jsonl event shape), no
+  implementation coupling.
