@@ -1,10 +1,12 @@
-# agentphone Core Implementation Plan (Increment 1)
+# agentphone Core Implementation Plan (Increment 1) — rev 2
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> Rev 2 incorporates the plan-review gate findings (see `impl.md` → Review findings). Headline changes vs rev 1: no `threadId` on listen/inbox, wall-clock long-poll window, lint config fixes, TDD-honest task sequencing for the core, injected MCP handler, testkit outside core, provisioning in core, boundary events, CI matrix task.
+
 **Goal:** Build the agentphone server — phonebook, calls (threads), messages, long-poll listen, voicemail — with one contract-first core and three thin surfaces (HTTP JSON API, MCP streamable-HTTP, typed CLI), per `docs/increment-1-agentphone-core/design.md`.
 
-**Architecture:** zod contracts + `PhoneService` core with injected ports (`Store`, `Emitter`, `Clock`); better-sqlite3 store; express HTTP adapter with bearer-token auth middleware; MCP adapter mounted on the same express app; typed fetch client consumed by a commander CLI. Dependencies flow inward: `cli → client → HTTP → core ← store`, `mcp → core`.
+**Architecture:** zod contracts + `PhoneService` core with injected ports (`Store`, `Emitter`, `Clock`); better-sqlite3 store; express HTTP adapter with bearer-token auth middleware; MCP adapter injected into the HTTP app at the composition root; typed fetch client consumed by a commander CLI. Dependencies flow inward: `cli → client → HTTP → core ← store`, `mcp → core`; `http` never imports `mcp`.
 
 **Tech Stack:** TypeScript (strict, ESM/NodeNext, Node 20+), express 4, zod 3, @modelcontextprotocol/sdk, better-sqlite3, commander, vitest, tsup, eslint (typescript-eslint strict) + prettier.
 
@@ -14,36 +16,38 @@
 - No `as any`. Fail-fast required config. No ad-hoc logging on core paths — canonical wide events only.
 - Commit format: `type(component): message` (e.g. `feat(core): add delivery semantics`).
 - Do not use `cd` when already in `O:\_web\omnith\agentphone`. No git pager flags.
+- The injected `Clock` is for **domain time** (createdAt, lastActivityAt, TTL derivation, event `ts`) only. Long-poll scheduling uses real wall-clock (`Date.now()`), matching the real timers in `Waiters`.
 
 ---
 
 ## File structure (locked in)
 
 ```
-package.json / tsconfig.json / eslint.config.js / .prettierrc.json / vitest.config.ts / tsup.config.ts / .gitignore
+package.json / tsconfig.json / eslint.config.js / .prettierrc.json / .prettierignore /
+vitest.config.ts / tsup.config.ts / .gitignore / .github/workflows/ci.yml
 src/core/errors.ts        PhoneError, codes, http status map
 src/core/ports.ts         Store (5 segregated interfaces), Emitter, Clock, record types
 src/core/clock.ts         systemClock
 src/core/tokens.ts        newToken / newInviteCode / hashSecret
 src/core/contracts.ts     zod schemas + inferred types for all verbs
 src/core/waiters.ts       Waiters (long-poll park/notify)
-src/core/service.ts       PhoneService (all 11 verbs + authenticate + instrumentation)
-src/core/testkit.ts       FakeClock, makeService, provision helpers (test-only utilities)
+src/core/provisioning.ts  createInvite / addAgent / revokeAgent / listAgentRecords (port consumers)
+src/core/service.ts       PhoneService (11 verbs + authenticate + instrumentation)
 src/core/config.ts        loadServerConfig / loadClientConfig
 src/store/sqlite.ts       SqliteStore implements Store
 src/obs/emitters.ts       JsonlEmitter, MemoryEmitter
-src/http/app.ts           buildApp (routes, auth middleware, error handler, /mcp mount)
-src/http/server.ts        startServer(config)
-src/mcp/tools.ts          buildMcpServer(service, agent)
+src/testkit/harness.ts    FakeClock, makeService, provision/invite helpers (test-only; sits ABOVE core)
+src/http/app.ts           buildApp (routes, auth middleware factory, error handler; mcpHandler injected)
+src/http/server.ts        startServer(config) — the composition root (wires store, emitters, mcp)
+src/mcp/tools.ts          buildMcpServer + handleMcpRequest (imported only by server.ts and mcp tests)
 src/client/client.ts      PhoneClient + ClientError + registerAgent
-src/cli/commands.ts       listenCommand, sendToCommand, resolvePeerThread, formatters
-src/cli/admin.ts          createInvite, addAgent, revokeAgent, listAgentRecords
+src/cli/commands.ts       listenCommand, exitCodeFor, bodyFrom, sendTo, ackAll, resolvePeerThread, formatMessage
 src/cli/index.ts          #!/usr/bin/env node — commander wiring (thin; no logic)
-test/story.test.ts        end-to-end story incl. restart persistence
-test/mcp.test.ts          MCP SDK client round-trip
+test/story.test.ts        end-to-end story incl. restart persistence + 401
+test/mcp.test.ts          MCP SDK client round-trip (send + listen tools included)
 ```
 
-Unit tests are colocated: `src/core/waiters.test.ts`, `src/core/service.identity.test.ts`, `src/core/service.calls.test.ts`, `src/core/service.delivery.test.ts`, `src/store/sqlite.test.ts`, `src/core/config.test.ts`, `src/http/app.test.ts`, `src/client/client.test.ts`, `src/cli/commands.test.ts`, `src/cli/admin.test.ts`.
+Unit tests are colocated: `src/core/waiters.test.ts`, `src/core/service.identity.test.ts`, `src/core/service.delivery.test.ts`, `src/core/service.lifecycle.test.ts`, `src/core/provisioning.test.ts`, `src/store/sqlite.test.ts`, `src/core/config.test.ts`, `src/http/app.test.ts`, `src/client/client.test.ts`, `src/cli/commands.test.ts`.
 
 ---
 
@@ -52,7 +56,7 @@ Unit tests are colocated: `src/core/waiters.test.ts`, `src/core/service.identity
 ### Task 1: Repo scaffold and toolchain
 
 **Files:**
-- Create: `package.json`, `tsconfig.json`, `eslint.config.js`, `.prettierrc.json`, `vitest.config.ts`, `tsup.config.ts`, `.gitignore`, `src/smoke.test.ts`
+- Create: `package.json`, `tsconfig.json`, `eslint.config.js`, `.prettierrc.json`, `.prettierignore`, `vitest.config.ts`, `tsup.config.ts`, `.gitignore`, `src/smoke.test.ts`
 
 - [ ] **Step 1: Create feature branch**
 
@@ -74,8 +78,8 @@ git checkout -b feat/ffl-1-agentphone-core
     "build": "tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . && prettier --check \"**/*.{ts,js,json,md}\"",
-    "format": "prettier --write \"**/*.{ts,js,json,md}\""
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write ."
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.0",
@@ -87,7 +91,7 @@ git checkout -b feat/ffl-1-agentphone-core
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^4.17.23",
-    "@types/node": "^24.0.0",
+    "@types/node": "^20.19.0",
     "eslint": "^9.30.0",
     "prettier": "^3.6.0",
     "tsup": "^8.5.0",
@@ -98,17 +102,19 @@ git checkout -b feat/ffl-1-agentphone-core
 }
 ```
 
+(`@types/node` tracks the lowest supported runtime — Node 20 — to avoid type-vs-runtime skew.)
+
 - [ ] **Step 3: Write `tsconfig.json`**
 
 ```json
 {
   "compilerOptions": {
     "target": "ES2022",
+    "lib": ["ES2022"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": false,
     "skipLibCheck": true,
     "types": ["node"],
     "outDir": "dist",
@@ -119,6 +125,8 @@ git checkout -b feat/ffl-1-agentphone-core
 }
 ```
 
+(`"lib": ["ES2022"]` keeps DOM globals out; `fetch`/`Response` types come from `@types/node`.)
+
 - [ ] **Step 4: Write `eslint.config.js`**
 
 ```js
@@ -127,14 +135,34 @@ import tseslint from 'typescript-eslint'
 export default tseslint.config({ ignores: ['dist/**', 'node_modules/**'] }, ...tseslint.configs.strict, {
   rules: {
     '@typescript-eslint/no-explicit-any': 'error',
+    '@typescript-eslint/no-unused-vars': [
+      'error',
+      { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+    ],
   },
 })
 ```
 
-- [ ] **Step 5: Write `.prettierrc.json`**
+(The `argsIgnorePattern` is load-bearing: express error handlers require a trailing unused `_next` parameter to be recognized as error middleware.)
+
+- [ ] **Step 5: Write `.prettierrc.json` and `.prettierignore`**
+
+`.prettierrc.json`:
 
 ```json
 { "semi": false, "singleQuote": true, "printWidth": 100 }
+```
+
+`.prettierignore` (prettier does NOT read .gitignore; without this, `prettier --check .` fails on `dist/` after any build and would reformat the hand-written design docs):
+
+```
+node_modules/
+dist/
+coverage/
+package-lock.json
+*.md
+*.jsonl
+*.db*
 ```
 
 - [ ] **Step 6: Write `vitest.config.ts`**
@@ -197,7 +225,7 @@ npm run typecheck
 npm run lint
 ```
 
-Expected: install succeeds (better-sqlite3 uses a prebuilt binary on Windows/Node 20+); 1 test passes; typecheck and lint clean. If prettier flags files, run `npm run format` once and re-check.
+Expected: install succeeds (better-sqlite3 uses a prebuilt binary on Windows/Node 20+); 1 test passes; typecheck and lint clean. If prettier flags a file you just wrote, run `npm run format` (it only touches non-ignored files) and re-check.
 
 - [ ] **Step 11: Commit**
 
@@ -255,7 +283,7 @@ export const hashSecret = (secret: string): string =>
   createHash('sha256').update(secret).digest('hex')
 ```
 
-- [ ] **Step 4: Write `src/core/errors.ts`** (no test — a data map; exercised by service/http tests)
+- [ ] **Step 4: Write `src/core/errors.ts`**
 
 ```ts
 export type ErrorCode =
@@ -264,6 +292,7 @@ export type ErrorCode =
   | 'NAME_TAKEN'
   | 'INVITE_INVALID'
   | 'VALIDATION_ERROR'
+  | 'PAYLOAD_TOO_LARGE'
   | 'INTERNAL'
 
 export class PhoneError extends Error {
@@ -282,6 +311,7 @@ export const httpStatus: Record<ErrorCode, number> = {
   NOT_FOUND: 404,
   NAME_TAKEN: 409,
   INVITE_INVALID: 410,
+  PAYLOAD_TOO_LARGE: 413,
   VALIDATION_ERROR: 422,
   INTERNAL: 500,
 }
@@ -295,6 +325,9 @@ export interface Clock {
 }
 
 export type Surface = 'http' | 'mcp' | 'admin'
+
+// a single listen/inbox delivers at most this many messages (stated contract; see design.md)
+export const DELIVERY_BATCH_LIMIT = 500
 
 export interface PhoneEvent {
   ts: number
@@ -382,7 +415,7 @@ export interface ThreadStore {
 export interface MessageStore {
   insertMessage(m: Omit<MessageRecord, 'id'>): number
   listMessages(threadId: number, afterId: number, limit: number): MessageRecord[]
-  listUnacked(recipient: string, afterId: number, threadId?: number): MessageRecord[]
+  listUnacked(recipient: string, afterId: number, limit: number): MessageRecord[]
   maxMessageId(): number
 }
 
@@ -419,7 +452,7 @@ git commit -m "feat(core): add error model, ports, clock, and secret tokens"
 **Files:**
 - Create: `src/core/contracts.ts`
 
-No dedicated test file — schema behavior is zod's (a dependency); OUR use of the schemas is exercised by service/http/client tests in later tasks.
+No dedicated test file — schema behavior is zod's (a dependency); OUR use of the schemas (including the 64KB body cap and the 60s waitMs cap) is exercised by service/http/client tests in later tasks.
 
 - [ ] **Step 1: Write `src/core/contracts.ts`**
 
@@ -431,6 +464,7 @@ export const AgentNameSchema = z
   .regex(/^[a-z0-9][a-z0-9-]{1,30}$/, 'lowercase slug, 2-31 chars, a-z 0-9 hyphen')
 export const MessageBodySchema = z.string().min(1).max(64 * 1024)
 export const WaitMsSchema = z.number().int().min(0).max(60_000)
+export const IdParamSchema = z.coerce.number().int().positive()
 
 export const RegisterInputSchema = z.object({
   name: AgentNameSchema,
@@ -490,9 +524,10 @@ export const SendInputSchema = z.object({
 })
 export const SendOutputSchema = z.object({ message: MessageViewSchema })
 
+// NOTE: no threadId on listen/inbox — a filtered listen cannot safely drive the single
+// global cursor (see design.md, Delivery semantics). history is the per-thread read.
 export const ListenInputSchema = z.object({
   waitMs: WaitMsSchema.default(0),
-  threadId: z.number().int().optional(),
 })
 export const ListenOutputSchema = z.object({
   messages: z.array(MessageViewSchema),
@@ -523,7 +558,6 @@ export const HangupOutputSchema = z.object({ thread: ThreadViewSchema })
 // http query-string variants (coerced numbers)
 export const ListenQuerySchema = z.object({
   waitMs: z.coerce.number().int().min(0).max(60_000).default(0),
-  threadId: z.coerce.number().int().optional(),
 })
 export const HistoryQuerySchema = z.object({
   afterId: z.coerce.number().int().default(0),
@@ -673,7 +707,7 @@ git commit -m "feat(core): add long-poll waiters with park, notify, and listenin
 - Create: `src/store/sqlite.ts`
 - Test: `src/store/sqlite.test.ts`
 
-Only the nontrivial queries get direct tests (`listUnacked` filtering, `listThreadsFor` on both columns, cursor upsert, `maxMessageId`); plain CRUD is exercised through service tests.
+Only the nontrivial queries get direct tests (`listUnacked` filtering + limit, `listThreadsFor` on both columns, cursor upsert, `maxMessageId`); plain CRUD is exercised through service tests.
 
 - [ ] **Step 1: Write the failing test** — `src/store/sqlite.test.ts`
 
@@ -704,7 +738,7 @@ const thread = (a: string, b: string, subject: string) => ({
 })
 
 describe('SqliteStore', () => {
-  test('listUnacked filters by recipient, afterId, and optional threadId, in id order', () => {
+  test('listUnacked filters by recipient and afterId, in id order, respecting limit', () => {
     const s = new SqliteStore(':memory:')
     const t1 = s.insertThread(thread('a-1', 'b-1', 'one'))
     const t2 = s.insertThread(thread('a-1', 'b-1', 'two'))
@@ -712,11 +746,11 @@ describe('SqliteStore', () => {
     const m2 = s.insertMessage(msg(t2, 'a-1', 'b-1', 'second'))
     const m3 = s.insertMessage(msg(t1, 'b-1', 'a-1', 'reply'))
 
-    expect(s.listUnacked('b-1', 0).map((m) => m.id)).toEqual([m1, m2])
-    expect(s.listUnacked('b-1', m1).map((m) => m.id)).toEqual([m2])
-    expect(s.listUnacked('b-1', 0, t1).map((m) => m.id)).toEqual([m1])
-    expect(s.listUnacked('a-1', 0).map((m) => m.id)).toEqual([m3])
-    expect(s.listUnacked('a-1', m3)).toEqual([])
+    expect(s.listUnacked('b-1', 0, 500).map((m) => m.id)).toEqual([m1, m2])
+    expect(s.listUnacked('b-1', m1, 500).map((m) => m.id)).toEqual([m2])
+    expect(s.listUnacked('b-1', 0, 1).map((m) => m.id)).toEqual([m1])
+    expect(s.listUnacked('a-1', 0, 500).map((m) => m.id)).toEqual([m3])
+    expect(s.listUnacked('a-1', m3, 500)).toEqual([])
   })
 
   test('listThreadsFor matches either participant column, newest activity first', () => {
@@ -922,17 +956,10 @@ export class SqliteStore implements Store {
       .prepare('SELECT * FROM messages WHERE threadId = ? AND id > ? ORDER BY id LIMIT ?')
       .all(threadId, afterId, limit) as MessageRecord[]
   }
-  listUnacked(recipient: string, afterId: number, threadId?: number): MessageRecord[] {
-    if (threadId === undefined) {
-      return this.db
-        .prepare('SELECT * FROM messages WHERE recipient = ? AND id > ? ORDER BY id LIMIT 500')
-        .all(recipient, afterId) as MessageRecord[]
-    }
+  listUnacked(recipient: string, afterId: number, limit: number): MessageRecord[] {
     return this.db
-      .prepare(
-        'SELECT * FROM messages WHERE recipient = ? AND id > ? AND threadId = ? ORDER BY id LIMIT 500',
-      )
-      .all(recipient, afterId, threadId) as MessageRecord[]
+      .prepare('SELECT * FROM messages WHERE recipient = ? AND id > ? ORDER BY id LIMIT ?')
+      .all(recipient, afterId, limit) as MessageRecord[]
   }
   maxMessageId(): number {
     const row = this.db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM messages').get() as {
@@ -970,19 +997,22 @@ git add src/store
 git commit -m "feat(store): add sqlite store with schema and segregated port impl"
 ```
 
-### Task 6: Emitters + PhoneService — identity & presence
+### Task 6: Emitters, provisioning, test harness, and PhoneService identity verbs
 
 **Files:**
-- Create: `src/obs/emitters.ts`, `src/core/service.ts`, `src/core/testkit.ts`
-- Test: `src/core/service.identity.test.ts`
+- Create: `src/obs/emitters.ts`, `src/core/provisioning.ts`, `src/testkit/harness.ts`, `src/core/service.ts`
+- Test: `src/core/provisioning.test.ts`, `src/core/service.identity.test.ts`
 
-- [ ] **Step 1: Write `src/obs/emitters.ts`** (MemoryEmitter is needed by every service test; JsonlEmitter's file behavior is tested in Task 8)
+The service is built verb-cluster by verb-cluster across Tasks 6-8, red-green each time. This task lands ONLY: instrumentation (`op`), `authenticate`, `register`, `checkin`, `phonebook`. Conversations/delivery come in Task 7; lifecycle in Task 8.
+
+- [ ] **Step 1: Write `src/obs/emitters.ts`** (MemoryEmitter is needed by every service test; JsonlEmitter's file behavior gets its test in Task 8)
 
 ```ts
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { Emitter, PhoneEvent } from '../core/ports.js'
 
+// note: synchronous append on the hot path - fine at two-agent scale (see impl.md deferred debt)
 export class JsonlEmitter implements Emitter {
   constructor(private readonly path: string) {
     mkdirSync(dirname(path), { recursive: true })
@@ -1000,15 +1030,66 @@ export class MemoryEmitter implements Emitter {
 }
 ```
 
-- [ ] **Step 2: Write `src/core/testkit.ts`**
+- [ ] **Step 2: Write `src/core/provisioning.ts`** (operator-side use-cases over ports; consumed by the CLI admin commands AND the test harness — no duplication)
 
 ```ts
-// test-only helpers shared by unit tests (not shipped: only imported from *.test.ts)
+import type { AgentRecord, AgentStore, Clock, InviteStore } from './ports.js'
+import { hashSecret, newInviteCode, newToken } from './tokens.js'
+
+export function createInvite(
+  store: InviteStore,
+  clock: Clock,
+  opts: { pinnedName?: string; ttlHours?: number },
+): { code: string; expiresAt: number } {
+  const code = newInviteCode()
+  const expiresAt = clock.now() + (opts.ttlHours ?? 24) * 3600_000
+  store.insertInvite({
+    codeHash: hashSecret(code),
+    pinnedName: opts.pinnedName ?? null,
+    expiresAt,
+    usedBy: null,
+    usedAt: null,
+    createdAt: clock.now(),
+  })
+  return { code, expiresAt }
+}
+
+export function addAgent(
+  store: AgentStore,
+  clock: Clock,
+  name: string,
+): { name: string; token: string } {
+  if (store.getAgent(name)) throw new Error(`agent "${name}" already exists`)
+  const token = newToken()
+  store.insertAgent({
+    name,
+    tokenHash: hashSecret(token),
+    status: null,
+    lastSeenAt: clock.now(),
+    createdAt: clock.now(),
+  })
+  return { name, token }
+}
+
+export function revokeAgent(store: AgentStore, name: string): void {
+  if (!store.getAgent(name)) throw new Error(`agent "${name}" does not exist`)
+  store.deleteAgent(name)
+}
+
+export function listAgentRecords(store: AgentStore): AgentRecord[] {
+  return store.listAgents()
+}
+```
+
+- [ ] **Step 3: Write `src/testkit/harness.ts`** (sits ABOVE core — may import core + adapters; core itself never imports outward)
+
+```ts
+// test-only harness shared by unit tests (not shipped: tsup bundles only the cli entry)
 import { MemoryEmitter } from '../obs/emitters.js'
 import { SqliteStore } from '../store/sqlite.js'
-import type { Clock } from './ports.js'
-import { PhoneService } from './service.js'
-import { hashSecret, newInviteCode, newToken } from './tokens.js'
+import type { Clock } from '../core/ports.js'
+import { addAgent, createInvite } from '../core/provisioning.js'
+import { PhoneService } from '../core/service.js'
 
 export class FakeClock implements Clock {
   constructor(public t: number = 1_000_000) {}
@@ -1037,38 +1118,67 @@ export function makeService(opts: { ttlMs?: number } = {}): Harness {
 
 // provision an agent directly (admin path), returning its bearer token
 export function provision(h: Harness, name: string): string {
-  const token = newToken()
-  h.store.insertAgent({
-    name,
-    tokenHash: hashSecret(token),
-    status: null,
-    lastSeenAt: h.clock.now(),
-    createdAt: h.clock.now(),
-  })
-  return token
+  return addAgent(h.store, h.clock, name).token
 }
 
 // create a live invite directly (admin path), returning the code
-export function invite(h: Harness, opts: { pinnedName?: string; ttlMs?: number } = {}): string {
-  const code = newInviteCode()
-  h.store.insertInvite({
-    codeHash: hashSecret(code),
-    pinnedName: opts.pinnedName ?? null,
-    expiresAt: h.clock.now() + (opts.ttlMs ?? 24 * 3600_000),
-    usedBy: null,
-    usedAt: null,
-    createdAt: h.clock.now(),
-  })
-  return code
+export function invite(h: Harness, opts: { pinnedName?: string; ttlHours?: number } = {}): string {
+  return createInvite(h.store, h.clock, opts).code
 }
 ```
 
-- [ ] **Step 3: Write the failing test** — `src/core/service.identity.test.ts`
+- [ ] **Step 4: Write the failing tests** — `src/core/provisioning.test.ts`:
 
 ```ts
 import { describe, expect, test } from 'vitest'
+import { makeService } from '../testkit/harness.js'
+import { addAgent, createInvite, revokeAgent } from './provisioning.js'
+
+describe('provisioning', () => {
+  test('createInvite produces a code the service accepts once', async () => {
+    const h = makeService()
+    const { code } = createInvite(h.store, h.clock, {})
+    const out = await h.service.register({ name: 'volumi', inviteCode: code }, 'http')
+    expect(out.token).toMatch(/^ap_/)
+    await expect(h.service.register({ name: 'other', inviteCode: code }, 'http')).rejects.toMatchObject({
+      code: 'INVITE_INVALID',
+    })
+  })
+
+  test('createInvite honors pinned name and ttl', async () => {
+    const h = makeService()
+    const { code } = createInvite(h.store, h.clock, { pinnedName: 'lab7', ttlHours: 1 })
+    await expect(h.service.register({ name: 'volumi', inviteCode: code }, 'http')).rejects.toMatchObject({
+      code: 'INVITE_INVALID',
+    })
+    h.clock.advance(3600_001)
+    await expect(h.service.register({ name: 'lab7', inviteCode: code }, 'http')).rejects.toMatchObject({
+      code: 'INVITE_INVALID',
+    })
+  })
+
+  test('addAgent mints a working token; revokeAgent kills it', () => {
+    const h = makeService()
+    const { token } = addAgent(h.store, h.clock, 'volumi')
+    expect(h.service.authenticate(token, 'http').name).toBe('volumi')
+    revokeAgent(h.store, 'volumi')
+    expect(() => h.service.authenticate(token, 'http')).toThrow()
+  })
+
+  test('addAgent rejects a taken name', () => {
+    const h = makeService()
+    addAgent(h.store, h.clock, 'volumi')
+    expect(() => addAgent(h.store, h.clock, 'volumi')).toThrow(/already/)
+  })
+})
+```
+
+and `src/core/service.identity.test.ts`:
+
+```ts
+import { describe, expect, test } from 'vitest'
+import { invite, makeService, provision } from '../testkit/harness.js'
 import { PhoneError } from './errors.js'
-import { invite, makeService, provision } from './testkit.js'
 
 describe('register (invite lifecycle)', () => {
   test('valid invite mints an ap_ token and the agent appears in the phonebook', async () => {
@@ -1076,39 +1186,18 @@ describe('register (invite lifecycle)', () => {
     const code = invite(h)
     const out = await h.service.register({ name: 'volumi', inviteCode: code }, 'http')
     expect(out.token).toMatch(/^ap_/)
-    const viewer = provision(h, 'viewer')
-    void viewer
+    provision(h, 'viewer')
     const book = await h.service.phonebook({ agent: 'viewer', surface: 'http' })
     expect(book.agents.map((a) => a.name)).toContain('volumi')
   })
 
-  test('an invite is single-use', async () => {
-    const h = makeService()
-    const code = invite(h)
-    await h.service.register({ name: 'volumi', inviteCode: code }, 'http')
-    await expect(h.service.register({ name: 'other', inviteCode: code }, 'http')).rejects.toThrow(
-      PhoneError,
-    )
-  })
-
   test('an expired invite is rejected', async () => {
     const h = makeService()
-    const code = invite(h, { ttlMs: 1000 })
-    h.clock.advance(1001)
+    const code = invite(h, { ttlHours: 1 })
+    h.clock.advance(3600_001)
     await expect(h.service.register({ name: 'volumi', inviteCode: code }, 'http')).rejects.toMatchObject(
       { code: 'INVITE_INVALID' },
     )
-  })
-
-  test('a pinned invite only registers its pinned name', async () => {
-    const h = makeService()
-    const code = invite(h, { pinnedName: 'lab7' })
-    await expect(h.service.register({ name: 'volumi', inviteCode: code }, 'http')).rejects.toMatchObject(
-      { code: 'INVITE_INVALID' },
-    )
-    const again = invite(h, { pinnedName: 'lab7' })
-    const out = await h.service.register({ name: 'lab7', inviteCode: again }, 'http')
-    expect(out.name).toBe('lab7')
   })
 
   test('a taken name is rejected with NAME_TAKEN', async () => {
@@ -1126,23 +1215,24 @@ describe('authenticate', () => {
     const h = makeService()
     const token = provision(h, 'volumi')
     h.clock.advance(5000)
-    const agent = h.service.authenticate(token)
+    const agent = h.service.authenticate(token, 'http')
     expect(agent.name).toBe('volumi')
     expect(h.store.getAgent('volumi')?.lastSeenAt).toBe(h.clock.now())
   })
 
-  test('missing or bad token throws UNAUTHORIZED and emits one auth error event', () => {
+  test('missing or bad token throws UNAUTHORIZED and emits one auth error event with the right surface', () => {
     const h = makeService()
-    expect(() => h.service.authenticate(undefined)).toThrow(PhoneError)
-    expect(() => h.service.authenticate('ap_wrong')).toThrow(PhoneError)
+    expect(() => h.service.authenticate(undefined, 'http')).toThrow(PhoneError)
+    expect(() => h.service.authenticate('ap_wrong', 'mcp')).toThrow(PhoneError)
     const authEvents = h.emitter.events.filter((e) => e.op === 'auth')
     expect(authEvents).toHaveLength(2)
+    expect(authEvents.map((e) => e.surface)).toEqual(['http', 'mcp'])
     expect(authEvents.every((e) => e.outcome === 'error')).toBe(true)
   })
 })
 
-describe('checkin + phonebook presence', () => {
-  test('checkin sets the status text shown in the phonebook', async () => {
+describe('checkin + phonebook', () => {
+  test('checkin sets the status text shown in the phonebook; omitting status preserves it', async () => {
     const h = makeService()
     provision(h, 'volumi')
     provision(h, 'gha-docker-runner')
@@ -1150,72 +1240,33 @@ describe('checkin + phonebook presence', () => {
       { agent: 'volumi', surface: 'http' },
       { status: 'iterating on CI retries' },
     )
+    await h.service.checkin({ agent: 'volumi', surface: 'http' }, {})
     const book = await h.service.phonebook({ agent: 'gha-docker-runner', surface: 'http' })
-    const volumi = book.agents.find((a) => a.name === 'volumi')
-    expect(volumi?.status).toBe('iterating on CI retries')
-  })
-
-  test('phonebook reports listening=true while a listen is parked', async () => {
-    const h = makeService()
-    provision(h, 'volumi')
-    provision(h, 'gha-docker-runner')
-    const parked = h.service.listen({ agent: 'volumi', surface: 'http' }, { waitMs: 1500 })
-    await new Promise((r) => setTimeout(r, 50))
-    const book = await h.service.phonebook({ agent: 'gha-docker-runner', surface: 'http' })
-    expect(book.agents.find((a) => a.name === 'volumi')?.listening).toBe(true)
-    await h.service.send(
-      { agent: 'gha-docker-runner', surface: 'http' },
-      { threadId: (await h.service.call({ agent: 'gha-docker-runner', surface: 'http' }, { to: 'volumi', subject: 'wake' })).thread.id, body: 'wake up' },
-    )
-    await parked
+    expect(book.agents.find((a) => a.name === 'volumi')?.status).toBe('iterating on CI retries')
   })
 })
 ```
 
-Note: the last test also exercises `call`/`send`/`listen`, implemented in this task and Task 7 — the whole `PhoneService` class lands here; Task 7 and Task 8 land its remaining tests.
+(Invite single-use and pinned-name rejection live in `provisioning.test.ts` — not duplicated here. The phonebook `listening` flag test arrives in Task 7 with `listen`.)
 
-- [ ] **Step 4: Run test to verify it fails**
+- [ ] **Step 5: Run tests to verify they fail**
 
-Run: `npx vitest run src/core/service.identity.test.ts`
+Run: `npx vitest run src/core/provisioning.test.ts src/core/service.identity.test.ts`
 Expected: FAIL — cannot find module `./service.js`
 
-- [ ] **Step 5: Write `src/core/service.ts`** (complete class — later tasks only add tests)
+- [ ] **Step 6: Write `src/core/service.ts`** (identity verbs only — Tasks 7-8 add the rest)
 
 ```ts
 import type {
-  AckInput,
-  AckOutput,
   AgentView,
-  CallInput,
-  CallOutput,
   CheckinInput,
   CheckinOutput,
-  HangupInput,
-  HangupOutput,
-  HistoryInput,
-  HistoryOutput,
-  ListenInput,
-  ListenOutput,
-  MessageView,
   PhonebookOutput,
   RegisterInput,
   RegisterOutput,
-  SendInput,
-  SendOutput,
-  ThreadsInput,
-  ThreadsOutput,
-  ThreadView,
 } from './contracts.js'
 import { PhoneError } from './errors.js'
-import type {
-  AgentRecord,
-  Clock,
-  Emitter,
-  MessageRecord,
-  Store,
-  Surface,
-  ThreadRecord,
-} from './ports.js'
+import type { AgentRecord, Clock, Emitter, Store, Surface } from './ports.js'
 import { hashSecret, newToken } from './tokens.js'
 import { Waiters } from './waiters.js'
 
@@ -1280,7 +1331,7 @@ export class PhoneService {
   }
 
   // --- auth (sync; emits only on failure so each request still yields exactly one event) ---
-  authenticate(token: string | undefined): AgentRecord {
+  authenticate(token: string | undefined, surface: Surface): AgentRecord {
     if (token !== undefined) {
       const agent = this.store.getAgentByTokenHash(hashSecret(token))
       if (agent) {
@@ -1291,7 +1342,7 @@ export class PhoneService {
     this.emitter.emit({
       ts: this.clock.now(),
       op: 'auth',
-      surface: 'http',
+      surface,
       agent: null,
       outcome: 'error',
       errorCode: 'UNAUTHORIZED',
@@ -1352,8 +1403,189 @@ export class PhoneService {
       ),
     }))
   }
+}
+```
 
-  // --- calls ---
+- [ ] **Step 7: Run tests to verify they pass**
+
+Run: `npx vitest run src/core/provisioning.test.ts src/core/service.identity.test.ts`
+Expected: all PASS
+
+- [ ] **Step 8: Full suite + typecheck + lint, commit**
+
+```powershell
+npm test
+npm run typecheck
+npm run lint
+git add src/core src/obs src/testkit
+git commit -m "feat(core): add identity verbs, provisioning use-cases, and canonical instrumentation"
+```
+
+### Task 7: PhoneService — conversations & delivery (call, send, listen, ack)
+
+**Files:**
+- Modify: `src/core/service.ts` (add methods)
+- Test: `src/core/service.delivery.test.ts`
+
+**Clock rule for this task:** the long-poll window in `listen` is wall-clock (`Date.now()`), matching `Waiters`' real timers — the injected `Clock` (a FakeClock in tests) would freeze the deadline and make the timeout branch unreachable. The injected `Clock` still stamps `createdAt`/`lastActivityAt`/event `ts`. Long-poll tests therefore use small REAL waits (≤ a few hundred ms).
+
+- [ ] **Step 1: Write the failing test** — `src/core/service.delivery.test.ts`
+
+```ts
+import { describe, expect, test } from 'vitest'
+import { makeService, provision } from '../testkit/harness.js'
+
+const gha = { agent: 'gha-docker-runner', surface: 'http' as const }
+const vol = { agent: 'volumi', surface: 'http' as const }
+
+function twoAgents() {
+  const h = makeService()
+  provision(h, 'gha-docker-runner')
+  provision(h, 'volumi')
+  return h
+}
+
+describe('call', () => {
+  test('creates an open thread and delivers the optional first message', async () => {
+    const h = twoAgents()
+    const out = await h.service.call(gha, { to: 'volumi', subject: 'ci retries', body: 'hello' })
+    expect(out.thread.status).toBe('open')
+    expect(out.message?.recipient).toBe('volumi')
+    const inbox = await h.service.listen(vol, { waitMs: 0 })
+    expect(inbox.messages.map((m) => m.body)).toEqual(['hello'])
+  })
+
+  test('calling an unknown agent is NOT_FOUND; calling yourself is VALIDATION_ERROR', async () => {
+    const h = twoAgents()
+    await expect(h.service.call(gha, { to: 'nobody', subject: 'x' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    })
+    await expect(
+      h.service.call(gha, { to: 'gha-docker-runner', subject: 'x' }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
+  })
+})
+
+describe('send', () => {
+  test('a non-participant cannot send into a thread', async () => {
+    const h = twoAgents()
+    provision(h, 'intruder')
+    const { thread } = await h.service.call(gha, { to: 'volumi', subject: 'private' })
+    await expect(
+      h.service.send({ agent: 'intruder', surface: 'http' }, { threadId: thread.id, body: 'hi' }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+})
+
+describe('at-least-once delivery', () => {
+  test('unacked messages are re-delivered until acked; ack stops redelivery', async () => {
+    const h = twoAgents()
+    await h.service.call(gha, { to: 'volumi', subject: 'ci', body: 'important' })
+    const first = await h.service.listen(vol, { waitMs: 0 })
+    const second = await h.service.listen(vol, { waitMs: 0 })
+    expect(first.messages).toEqual(second.messages) // no silent consumption
+    await h.service.ack(vol, { throughMessageId: second.cursor })
+    const third = await h.service.listen(vol, { waitMs: 0 })
+    expect(third.messages).toEqual([])
+  })
+
+  test('ack is idempotent, never regresses, and caps at the max message id', async () => {
+    const h = twoAgents()
+    await h.service.call(gha, { to: 'volumi', subject: 'ci', body: 'm1' })
+    const { cursor } = await h.service.listen(vol, { waitMs: 0 })
+    const acked = await h.service.ack(vol, { throughMessageId: cursor })
+    expect(acked.ackedThroughMessageId).toBe(cursor)
+    expect((await h.service.ack(vol, { throughMessageId: 0 })).ackedThroughMessageId).toBe(cursor)
+    expect((await h.service.ack(vol, { throughMessageId: 999_999 })).ackedThroughMessageId).toBe(
+      h.store.maxMessageId(),
+    )
+  })
+})
+
+describe('listen long-poll', () => {
+  test('returns immediately when unacked messages already exist', async () => {
+    const h = twoAgents()
+    await h.service.call(gha, { to: 'volumi', subject: 'ci', body: 'waiting for you' })
+    const out = await h.service.listen(vol, { waitMs: 5000 })
+    expect(out.messages).toHaveLength(1)
+    const ev = h.emitter.events.find((e) => e.op === 'listen')
+    expect(ev?.deliveredCount).toBe(1)
+  })
+
+  test('parks until a send wakes it', async () => {
+    const h = twoAgents()
+    const { thread } = await h.service.call(gha, { to: 'volumi', subject: 'ci' })
+    const parked = h.service.listen(vol, { waitMs: 5000 })
+    await new Promise((r) => setTimeout(r, 50))
+    await h.service.send(gha, { threadId: thread.id, body: 'ping' })
+    const out = await parked
+    expect(out.messages.map((m) => m.body)).toEqual(['ping'])
+  })
+
+  test('times out empty when nothing arrives, leaving the cursor unchanged', async () => {
+    const h = twoAgents()
+    const before = h.store.getCursor('volumi')
+    const out = await h.service.listen(vol, { waitMs: 150 })
+    expect(out.messages).toEqual([])
+    expect(out.cursor).toBe(before)
+  })
+
+  test('phonebook reports listening=true while a listen is parked', async () => {
+    const h = twoAgents()
+    const parked = h.service.listen(vol, { waitMs: 400 })
+    await new Promise((r) => setTimeout(r, 50))
+    const book = await h.service.phonebook(gha)
+    expect(book.agents.find((a) => a.name === 'volumi')?.listening).toBe(true)
+    await parked
+    const after = await h.service.phonebook(gha)
+    expect(after.agents.find((a) => a.name === 'volumi')?.listening).toBe(false)
+  })
+})
+
+describe('canonical events', () => {
+  test('every operation emits exactly one event, including failures', async () => {
+    const h = twoAgents()
+    h.emitter.events.length = 0
+    await h.service.call(gha, { to: 'volumi', subject: 'ci', body: 'm1' })
+    await h.service.listen(vol, { waitMs: 0 })
+    await h.service.ack(vol, { throughMessageId: 1 })
+    await h.service.call(gha, { to: 'nobody', subject: 'x' }).catch(() => undefined)
+    const ops = h.emitter.events.map((e) => `${e.op}:${e.outcome}`)
+    expect(ops).toEqual(['call:ok', 'listen:ok', 'ack:ok', 'call:error'])
+  })
+})
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run src/core/service.delivery.test.ts`
+Expected: FAIL — `h.service.call is not a function`
+
+- [ ] **Step 3: Add the conversation/delivery methods to `src/core/service.ts`**
+
+Add these imports to the existing import block:
+
+```ts
+import type {
+  AckInput,
+  AckOutput,
+  CallInput,
+  CallOutput,
+  ListenInput,
+  ListenOutput,
+  MessageView,
+  SendInput,
+  SendOutput,
+  ThreadView,
+} from './contracts.js'
+import { DELIVERY_BATCH_LIMIT } from './ports.js'
+import type { MessageRecord, ThreadRecord } from './ports.js'
+```
+
+Add these methods to the `PhoneService` class:
+
+```ts
+  // --- conversations ---
   call(ctx: CallCtx, input: CallInput): Promise<CallOutput> {
     return this.op('call', ctx.surface, ctx.agent, (ev) => {
       if (input.to === ctx.agent) throw new PhoneError('VALIDATION_ERROR', 'cannot call yourself')
@@ -1386,7 +1618,15 @@ export class PhoneService {
         })
         ev.messageId = id
         this.waiters.notify(input.to)
-        message = this.toMessageView({ id, threadId, sender: ctx.agent, recipient: input.to, body: input.body, kind: 'message', createdAt: now })
+        message = {
+          id,
+          threadId,
+          sender: ctx.agent,
+          recipient: input.to,
+          body: input.body,
+          kind: 'message',
+          createdAt: now,
+        }
       }
       const thread = this.store.getThread(threadId)
       if (!thread) throw new PhoneError('INTERNAL', 'thread vanished after insert')
@@ -1407,7 +1647,7 @@ export class PhoneService {
         kind: 'message',
         createdAt: now,
       })
-      // reopen-on-send: sending always makes the thread open again
+      // reopen-on-send: sending always makes the thread open again (design: status is advisory)
       this.store.updateThread({
         ...thread,
         status: 'open',
@@ -1433,77 +1673,25 @@ export class PhoneService {
     })
   }
 
-  hangup(ctx: CallCtx, input: HangupInput): Promise<HangupOutput> {
-    return this.op('hangup', ctx.surface, ctx.agent, (ev) => {
-      const thread = this.requireParticipant(input.threadId, ctx.agent)
-      const now = this.clock.now()
-      const other = this.otherParticipant(thread, ctx.agent)
-      if (input.note !== undefined) {
-        const id = this.store.insertMessage({
-          threadId: thread.id,
-          sender: ctx.agent,
-          recipient: other,
-          body: input.note,
-          kind: 'system',
-          createdAt: now,
-        })
-        ev.messageId = id
-        this.waiters.notify(other)
-      }
-      const ended: ThreadRecord = {
-        ...thread,
-        status: 'ended',
-        endedBy: ctx.agent,
-        endNote: input.note ?? null,
-        endedAt: now,
-        lastActivityAt: now,
-      }
-      this.store.updateThread(ended)
-      ev.threadId = thread.id
-      return { thread: this.toThreadView(ended) }
-    })
-  }
-
-  threads(ctx: CallCtx, input: ThreadsInput): Promise<ThreadsOutput> {
-    return this.op('threads', ctx.surface, ctx.agent, () => {
-      const all = this.store.listThreadsFor(ctx.agent).map((t) => this.toThreadView(t))
-      const filtered =
-        input.status === 'all' ? all : all.filter((t) => t.status === input.status)
-      return { threads: filtered }
-    })
-  }
-
-  history(ctx: CallCtx, input: HistoryInput): Promise<HistoryOutput> {
-    return this.op('history', ctx.surface, ctx.agent, (ev) => {
-      const thread = this.requireParticipant(input.threadId, ctx.agent)
-      ev.threadId = thread.id
-      return {
-        messages: this.store
-          .listMessages(thread.id, input.afterId, input.limit)
-          .map((m) => this.toMessageView(m)),
-      }
-    })
-  }
-
   // --- delivery ---
   listen(ctx: CallCtx, input: ListenInput): Promise<ListenOutput> {
     return this.op('listen', ctx.surface, ctx.agent, async (ev) => {
-      const start = this.clock.now()
-      const deadline = start + input.waitMs
+      // wall-clock window: Waiters uses real timers; the injected Clock is domain time only
+      const startedAt = Date.now()
       for (;;) {
         const cursor = this.store.getCursor(ctx.agent)
-        const records = this.store.listUnacked(ctx.agent, cursor, input.threadId)
-        const now = this.clock.now()
-        if (records.length > 0 || now >= deadline) {
+        const records = this.store.listUnacked(ctx.agent, cursor, DELIVERY_BATCH_LIMIT)
+        const elapsed = Date.now() - startedAt
+        if (records.length > 0 || elapsed >= input.waitMs) {
           ev.deliveredCount = records.length
-          ev.waitedMs = now - start
+          ev.waitedMs = elapsed
           const last = records[records.length - 1]
           return {
             messages: records.map((m) => this.toMessageView(m)),
             cursor: last ? last.id : cursor,
           }
         }
-        await this.waiters.wait(ctx.agent, deadline - now)
+        await this.waiters.wait(ctx.agent, input.waitMs - elapsed)
       }
     })
   }
@@ -1518,7 +1706,7 @@ export class PhoneService {
     })
   }
 
-  // --- helpers ---
+  // --- view/guard helpers ---
   private effectiveStatus(t: ThreadRecord): 'open' | 'ended' {
     if (t.status === 'ended') return 'ended'
     return this.clock.now() - t.lastActivityAt > this.ttlMs ? 'ended' : 'open'
@@ -1561,36 +1749,41 @@ export class PhoneService {
   private otherParticipant(t: ThreadRecord, agent: string): string {
     return t.participantA === agent ? t.participantB : t.participantA
   }
-}
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [ ] **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run src/core/service.identity.test.ts`
+Run: `npx vitest run src/core/service.delivery.test.ts`
 Expected: all PASS
 
-- [ ] **Step 7: Run full suite + typecheck + lint, commit**
+- [ ] **Step 5: Full suite, commit**
 
 ```powershell
 npm test
-npm run typecheck
-npm run lint
-git add src/core src/obs
-git commit -m "feat(core): add PhoneService with identity, presence, and instrumentation"
+git add src/core/service.ts src/core/service.delivery.test.ts
+git commit -m "feat(core): add conversations and at-least-once delivery with wall-clock long-poll"
 ```
 
-### Task 7: PhoneService — calls behavior tests (TTL, reopen, hangup)
+### Task 8: PhoneService — lifecycle (hangup, threads, history) + TTL + JsonlEmitter
 
 **Files:**
-- Test: `src/core/service.calls.test.ts` (implementation already landed in Task 6 — these tests pin the contracts; if any fail, fix `service.ts` until they pass)
+- Modify: `src/core/service.ts` (add methods)
+- Test: `src/core/service.lifecycle.test.ts`
 
-- [ ] **Step 1: Write the test file** — `src/core/service.calls.test.ts`
+- [ ] **Step 1: Write the failing test** — `src/core/service.lifecycle.test.ts`
 
 ```ts
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { makeService, provision } from './testkit.js'
+import { JsonlEmitter } from '../obs/emitters.js'
+import { makeService, provision } from '../testkit/harness.js'
+import type { PhoneEvent } from './ports.js'
 
 const HOUR = 3600_000
+const gha = { agent: 'gha-docker-runner', surface: 'http' as const }
+const vol = { agent: 'volumi', surface: 'http' as const }
 
 function twoAgents() {
   const h = makeService()
@@ -1598,53 +1791,6 @@ function twoAgents() {
   provision(h, 'volumi')
   return h
 }
-const gha = { agent: 'gha-docker-runner', surface: 'http' as const }
-const vol = { agent: 'volumi', surface: 'http' as const }
-
-describe('call', () => {
-  test('creates an open thread and delivers the optional first message', async () => {
-    const h = twoAgents()
-    const out = await h.service.call(gha, { to: 'volumi', subject: 'ci retries', body: 'hello' })
-    expect(out.thread.status).toBe('open')
-    expect(out.message?.recipient).toBe('volumi')
-    const inbox = await h.service.listen(vol, { waitMs: 0 })
-    expect(inbox.messages.map((m) => m.body)).toEqual(['hello'])
-  })
-
-  test('calling an unknown agent is NOT_FOUND; calling yourself is VALIDATION_ERROR', async () => {
-    const h = twoAgents()
-    await expect(h.service.call(gha, { to: 'nobody', subject: 'x' })).rejects.toMatchObject({
-      code: 'NOT_FOUND',
-    })
-    await expect(
-      h.service.call(gha, { to: 'gha-docker-runner', subject: 'x' }),
-    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
-  })
-})
-
-describe('send', () => {
-  test('a non-participant cannot send into a thread', async () => {
-    const h = twoAgents()
-    provision(h, 'intruder')
-    const { thread } = await h.service.call(gha, { to: 'volumi', subject: 'private' })
-    await expect(
-      h.service.send({ agent: 'intruder', surface: 'http' }, { threadId: thread.id, body: 'hi' }),
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
-  })
-
-  test('sending to an ended thread reopens it', async () => {
-    const h = twoAgents()
-    const { thread } = await h.service.call(gha, { to: 'volumi', subject: 'ci' })
-    await h.service.hangup(gha, { threadId: thread.id })
-    expect((await h.service.threads(gha, { status: 'ended' })).threads.map((t) => t.id)).toEqual([
-      thread.id,
-    ])
-    await h.service.send(vol, { threadId: thread.id, body: 'one more thing' })
-    expect((await h.service.threads(gha, { status: 'open' })).threads.map((t) => t.id)).toEqual([
-      thread.id,
-    ])
-  })
-})
 
 describe('hangup', () => {
   test('ends the thread and delivers the note as a system message', async () => {
@@ -1658,7 +1804,20 @@ describe('hangup', () => {
   })
 })
 
-describe('thread openness TTL (lazy)', () => {
+describe('threads + reopen-on-send', () => {
+  test('sending to an ended thread reopens it', async () => {
+    const h = twoAgents()
+    const { thread } = await h.service.call(gha, { to: 'volumi', subject: 'ci' })
+    await h.service.hangup(gha, { threadId: thread.id })
+    expect((await h.service.threads(gha, { status: 'ended' })).threads.map((t) => t.id)).toEqual([
+      thread.id,
+    ])
+    await h.service.send(vol, { threadId: thread.id, body: 'one more thing' })
+    expect((await h.service.threads(gha, { status: 'open' })).threads.map((t) => t.id)).toEqual([
+      thread.id,
+    ])
+  })
+
   test('an idle open thread reads as ended after the TTL and revives on send', async () => {
     const h = twoAgents()
     const { thread } = await h.service.call(gha, { to: 'volumi', subject: 'ci' })
@@ -1687,122 +1846,16 @@ describe('history', () => {
     expect(rest.messages.map((m) => m.body)).toEqual(['m2', 'm3'])
     provision(h, 'intruder')
     await expect(
-      h.service.history({ agent: 'intruder', surface: 'http' }, { threadId: thread.id, afterId: 0, limit: 100 }),
+      h.service.history(
+        { agent: 'intruder', surface: 'http' },
+        { threadId: thread.id, afterId: 0, limit: 100 },
+      ),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
 })
-```
 
-- [ ] **Step 2: Run the tests**
-
-Run: `npx vitest run src/core/service.calls.test.ts`
-Expected: all PASS (implementation landed in Task 6). If any FAIL, fix `src/core/service.ts` — the tests are the contract.
-
-- [ ] **Step 3: Commit**
-
-```powershell
-git add src/core/service.calls.test.ts src/core/service.ts
-git commit -m "test(core): pin call semantics - reopen, hangup notes, lazy TTL, history"
-```
-
-### Task 8: PhoneService — delivery tests + JsonlEmitter
-
-**Files:**
-- Test: `src/core/service.delivery.test.ts`
-
-- [ ] **Step 1: Write the test file** — `src/core/service.delivery.test.ts`
-
-```ts
-import { mkdtempSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { describe, expect, test } from 'vitest'
-import { JsonlEmitter } from '../obs/emitters.js'
-import type { PhoneEvent } from './ports.js'
-import { makeService, provision } from './testkit.js'
-
-const gha = { agent: 'gha-docker-runner', surface: 'http' as const }
-const vol = { agent: 'volumi', surface: 'http' as const }
-
-function twoAgents() {
-  const h = makeService()
-  provision(h, 'gha-docker-runner')
-  provision(h, 'volumi')
-  return h
-}
-
-describe('at-least-once delivery', () => {
-  test('unacked messages are re-delivered until acked; ack stops redelivery', async () => {
-    const h = twoAgents()
-    await h.service.call(gha, { to: 'volumi', subject: 'ci', body: 'important' })
-    const first = await h.service.listen(vol, { waitMs: 0 })
-    const second = await h.service.listen(vol, { waitMs: 0 })
-    expect(first.messages).toEqual(second.messages) // no silent consumption
-    await h.service.ack(vol, { throughMessageId: second.cursor })
-    const third = await h.service.listen(vol, { waitMs: 0 })
-    expect(third.messages).toEqual([])
-  })
-
-  test('ack is idempotent, never regresses, and caps at the max message id', async () => {
-    const h = twoAgents()
-    await h.service.call(gha, { to: 'volumi', subject: 'ci', body: 'm1' })
-    const { cursor } = await h.service.listen(vol, { waitMs: 0 })
-    const acked = await h.service.ack(vol, { throughMessageId: cursor })
-    expect(acked.ackedThroughMessageId).toBe(cursor)
-    // lower ack does not regress
-    expect((await h.service.ack(vol, { throughMessageId: 0 })).ackedThroughMessageId).toBe(cursor)
-    // future ack caps at max existing id
-    expect((await h.service.ack(vol, { throughMessageId: 999_999 })).ackedThroughMessageId).toBe(
-      h.store.maxMessageId(),
-    )
-  })
-})
-
-describe('listen long-poll', () => {
-  test('returns immediately when unacked messages already exist', async () => {
-    const h = twoAgents()
-    await h.service.call(gha, { to: 'volumi', subject: 'ci', body: 'waiting for you' })
-    const out = await h.service.listen(vol, { waitMs: 5000 })
-    expect(out.messages).toHaveLength(1)
-    const ev = h.emitter.events.find((e) => e.op === 'listen')
-    expect(ev?.deliveredCount).toBe(1)
-  })
-
-  test('parks until a send wakes it', async () => {
-    const h = twoAgents()
-    const { thread } = await h.service.call(gha, { to: 'volumi', subject: 'ci' })
-    const parked = h.service.listen(vol, { waitMs: 5000 })
-    await new Promise((r) => setTimeout(r, 50))
-    await h.service.send(gha, { threadId: thread.id, body: 'ping' })
-    const out = await parked
-    expect(out.messages.map((m) => m.body)).toEqual(['ping'])
-  })
-
-  test('threadId filter ignores traffic on other threads', async () => {
-    const h = twoAgents()
-    const a = await h.service.call(gha, { to: 'volumi', subject: 'watch-this' })
-    const b = await h.service.call(gha, { to: 'volumi', subject: 'noise' })
-    const parked = h.service.listen(vol, { waitMs: 300, threadId: a.thread.id })
-    await new Promise((r) => setTimeout(r, 30))
-    await h.service.send(gha, { threadId: b.thread.id, body: 'noise message' })
-    const out = await parked
-    expect(out.messages).toEqual([]) // timed out; the noise thread did not satisfy the filter
-  })
-})
-
-describe('canonical events', () => {
-  test('every operation emits exactly one event, including failures', async () => {
-    const h = twoAgents()
-    h.emitter.events.length = 0
-    await h.service.call(gha, { to: 'volumi', subject: 'ci', body: 'm1' })
-    await h.service.listen(vol, { waitMs: 0 })
-    await h.service.ack(vol, { throughMessageId: 1 })
-    await h.service.call(gha, { to: 'nobody', subject: 'x' }).catch(() => undefined)
-    const ops = h.emitter.events.map((e) => `${e.op}:${e.outcome}`)
-    expect(ops).toEqual(['call:ok', 'listen:ok', 'ack:ok', 'call:error'])
-  })
-
-  test('JsonlEmitter writes one JSON line per event', () => {
+describe('JsonlEmitter', () => {
+  test('writes one JSON line per event', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agentphone-'))
     const path = join(dir, 'events.jsonl')
     const emitter = new JsonlEmitter(path)
@@ -1824,20 +1877,99 @@ describe('canonical events', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests**
+(The reopen-on-send *code* landed with `send` in Task 7 as an unconditional write; the test here is the red-green for the observable contract, which needs `hangup`/`threads` to exist — they don't yet, so this file fails for the right reason.)
 
-Run: `npx vitest run src/core/service.delivery.test.ts`
-Expected: all PASS. If any FAIL, fix `src/core/service.ts` / `src/obs/emitters.ts` — the tests are the contract.
+- [ ] **Step 2: Run test to verify it fails**
 
-- [ ] **Step 3: Run the full suite, commit**
+Run: `npx vitest run src/core/service.lifecycle.test.ts`
+Expected: FAIL — `h.service.hangup is not a function`
+
+- [ ] **Step 3: Add the lifecycle methods to `src/core/service.ts`**
+
+Add these imports to the existing contracts import:
+
+```ts
+import type {
+  HangupInput,
+  HangupOutput,
+  HistoryInput,
+  HistoryOutput,
+  ThreadsInput,
+  ThreadsOutput,
+} from './contracts.js'
+```
+
+Add these methods to the `PhoneService` class:
+
+```ts
+  hangup(ctx: CallCtx, input: HangupInput): Promise<HangupOutput> {
+    return this.op('hangup', ctx.surface, ctx.agent, (ev) => {
+      const thread = this.requireParticipant(input.threadId, ctx.agent)
+      const now = this.clock.now()
+      const other = this.otherParticipant(thread, ctx.agent)
+      if (input.note !== undefined) {
+        const id = this.store.insertMessage({
+          threadId: thread.id,
+          sender: ctx.agent,
+          recipient: other,
+          body: input.note,
+          kind: 'system',
+          createdAt: now,
+        })
+        ev.messageId = id
+        this.waiters.notify(other)
+      }
+      const ended = {
+        ...thread,
+        status: 'ended' as const,
+        endedBy: ctx.agent,
+        endNote: input.note ?? null,
+        endedAt: now,
+        lastActivityAt: now,
+      }
+      this.store.updateThread(ended)
+      ev.threadId = thread.id
+      return { thread: this.toThreadView(ended) }
+    })
+  }
+
+  threads(ctx: CallCtx, input: ThreadsInput): Promise<ThreadsOutput> {
+    return this.op('threads', ctx.surface, ctx.agent, () => {
+      const all = this.store.listThreadsFor(ctx.agent).map((t) => this.toThreadView(t))
+      const filtered = input.status === 'all' ? all : all.filter((t) => t.status === input.status)
+      return { threads: filtered }
+    })
+  }
+
+  history(ctx: CallCtx, input: HistoryInput): Promise<HistoryOutput> {
+    return this.op('history', ctx.surface, ctx.agent, (ev) => {
+      const thread = this.requireParticipant(input.threadId, ctx.agent)
+      ev.threadId = thread.id
+      return {
+        messages: this.store
+          .listMessages(thread.id, input.afterId, input.limit)
+          .map((m) => this.toMessageView(m)),
+      }
+    })
+  }
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run src/core/service.lifecycle.test.ts`
+Expected: all PASS
+
+- [ ] **Step 5: Full suite + typecheck + lint, commit**
 
 ```powershell
 npm test
-git add src/core/service.delivery.test.ts
-git commit -m "test(core): pin delivery semantics - at-least-once, long-poll wake, canonical events"
+npm run typecheck
+npm run lint
+git add src/core/service.ts src/core/service.lifecycle.test.ts
+git commit -m "feat(core): add thread lifecycle with lazy ttl and hangup system notes"
 ```
 
-**Phase 1 checkpoint (per project CLAUDE.md):** dispatch parallel spec-conformance + code-quality reviews of `src/core` + `src/store` before starting Phase 2. Fix HIGH/MEDIUM findings before continuing.
+**Phase 1 checkpoint (per project CLAUDE.md):** dispatch parallel spec-conformance + code-quality reviews of `src/core` + `src/store` + `src/testkit` before starting Phase 2. Fix HIGH/MEDIUM findings before continuing.
 
 ---
 
@@ -1920,7 +2052,8 @@ function intFrom(env: Env, key: string, fallback: number): number {
   const raw = env[key]
   if (raw === undefined || raw === '') return fallback
   const n = Number(raw)
-  if (!Number.isInteger(n) || n < 0) throw new Error(`${key} must be a non-negative integer, got "${raw}"`)
+  if (!Number.isInteger(n) || n < 0)
+    throw new Error(`${key} must be a non-negative integer, got "${raw}"`)
   return n
 }
 
@@ -1958,12 +2091,17 @@ git commit -m "feat(core): add fail-fast config loaders with effective defaults"
 - Create: `src/http/app.ts`, `src/http/server.ts`
 - Test: `src/http/app.test.ts`
 
+Design points enforced here (from the plan-review gate):
+- `buildApp` takes an OPTIONAL injected `mcpHandler` — `src/http` never imports `src/mcp`. The composition root (`server.ts`) wires them together in Task 11.
+- Auth middleware is a factory `auth(surface)` so MCP auth failures carry `surface: 'mcp'`.
+- Boundary rejections (zod 422, payload-too-large 413) emit a canonical event — every request yields exactly one event. `PhoneError`s do NOT re-emit (the service's `op()` already did).
+
 - [ ] **Step 1: Write the failing test** — `src/http/app.test.ts`
 
 ```ts
 import type { Server } from 'node:http'
 import { afterEach, describe, expect, test } from 'vitest'
-import { invite, makeService, provision, type Harness } from '../core/testkit.js'
+import { invite, makeService, provision, type Harness } from '../testkit/harness.js'
 import { buildApp } from './app.js'
 
 let server: Server | undefined
@@ -1973,7 +2111,7 @@ afterEach(() => {
 })
 
 async function boot(h: Harness): Promise<string> {
-  const app = buildApp({ service: h.service })
+  const app = buildApp({ service: h.service, emitter: h.emitter, clock: h.clock })
   await new Promise<void>((resolve) => {
     server = app.listen(0, '127.0.0.1', () => resolve())
   })
@@ -2012,10 +2150,11 @@ describe('http surface', () => {
     expect(agents.status).toBe(200)
   })
 
-  test('validation failures return the single error shape with 422', async () => {
+  test('validation failures return 422 with the single error shape AND emit one canonical event', async () => {
     const h = makeService()
     const token = provision(h, 'volumi')
     const base = await boot(h)
+    h.emitter.events.length = 0
     const res = await fetch(`${base}/api/calls`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
@@ -2023,6 +2162,39 @@ describe('http surface', () => {
     })
     expect(res.status).toBe(422)
     expect(await asJson(res)).toMatchObject({ error: { code: 'VALIDATION_ERROR' } })
+    const boundary = h.emitter.events.filter((e) => e.outcome === 'error')
+    expect(boundary).toHaveLength(1)
+    expect(boundary[0]).toMatchObject({ op: 'call', errorCode: 'VALIDATION_ERROR', agent: 'volumi' })
+  })
+
+  test('a body over the 64KB message cap is rejected with 422', async () => {
+    const h = makeService()
+    provision(h, 'gha-docker-runner')
+    const token = provision(h, 'volumi')
+    const base = await boot(h)
+    const res = await fetch(`${base}/api/calls`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        to: 'gha-docker-runner',
+        subject: 'big',
+        body: 'x'.repeat(64 * 1024 + 1),
+      }),
+    })
+    expect(res.status).toBe(422)
+  })
+
+  test('a payload beyond the transport limit maps to 413, not 500', async () => {
+    const h = makeService()
+    const token = provision(h, 'volumi')
+    const base = await boot(h)
+    const res = await fetch(`${base}/api/calls`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ to: 'volumi', subject: 'big', body: 'x'.repeat(300 * 1024) }),
+    })
+    expect(res.status).toBe(413)
+    expect(await asJson(res)).toMatchObject({ error: { code: 'PAYLOAD_TOO_LARGE' } })
   })
 
   test('domain errors map to their statuses (404 unknown thread)', async () => {
@@ -2082,7 +2254,6 @@ describe('http surface', () => {
     expect(after.messages).toEqual([])
   })
 })
-
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -2093,7 +2264,12 @@ Expected: FAIL — cannot find module `./app.js`
 - [ ] **Step 3: Write `src/http/app.ts`**
 
 ```ts
-import express, { type NextFunction, type Request, type RequestHandler, type Response } from 'express'
+import express, {
+  type NextFunction,
+  type Request,
+  type RequestHandler,
+  type Response,
+} from 'express'
 import { ZodError } from 'zod'
 import {
   AckInputSchema,
@@ -2101,17 +2277,28 @@ import {
   CheckinInputSchema,
   HangupInputSchema,
   HistoryQuerySchema,
+  IdParamSchema,
   ListenQuerySchema,
   RegisterInputSchema,
   SendInputSchema,
   ThreadsQuerySchema,
 } from '../core/contracts.js'
 import { httpStatus, PhoneError } from '../core/errors.js'
+import type { Clock, Emitter, Surface } from '../core/ports.js'
 import type { PhoneService } from '../core/service.js'
-import { handleMcpRequest } from '../mcp/tools.js'
+
+export type McpHandler = (
+  service: PhoneService,
+  agent: string,
+  req: Request,
+  res: Response,
+) => Promise<void>
 
 export interface AppDeps {
   service: PhoneService
+  emitter: Emitter
+  clock: Clock
+  mcpHandler?: McpHandler
 }
 
 // express 4 does not catch async rejections; wrap every async handler
@@ -2123,10 +2310,32 @@ const asyncH =
 
 const agentOf = (res: Response): string => res.locals.agent as string
 
+// body-parser's oversized-payload error shape
+const isPayloadTooLarge = (err: unknown): boolean =>
+  typeof err === 'object' && err !== null && (err as { type?: string }).type === 'entity.too.large'
+
 export function buildApp(deps: AppDeps): express.Express {
-  const { service } = deps
+  const { service, emitter, clock } = deps
   const app = express()
   app.use(express.json({ limit: '256kb' }))
+
+  // every route stamps its op label before parsing so boundary failures can emit a canonical event
+  const label =
+    (op: string): RequestHandler =>
+    (_req, res, next) => {
+      res.locals.op = op
+      next()
+    }
+
+  const auth =
+    (surface: Surface): RequestHandler =>
+    (req, res, next) => {
+      const header = req.header('authorization')
+      const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined
+      res.locals.agent = service.authenticate(token, surface).name
+      res.locals.surface = surface
+      next()
+    }
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true })
@@ -2134,39 +2343,48 @@ export function buildApp(deps: AppDeps): express.Express {
 
   app.post(
     '/api/register',
+    label('register'),
     asyncH(async (req, res) => {
       const input = RegisterInputSchema.parse(req.body)
       res.status(201).json(await service.register(input, 'http'))
     }),
   )
 
-  const auth: RequestHandler = (req, res, next) => {
-    const header = req.header('authorization')
-    const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined
-    res.locals.agent = service.authenticate(token).name
-    next()
+  if (deps.mcpHandler) {
+    const mcpHandler = deps.mcpHandler
+    app.post(
+      '/mcp',
+      label('mcp'),
+      auth('mcp'),
+      asyncH(async (req, res) => {
+        await mcpHandler(service, agentOf(res), req, res)
+      }),
+    )
+    // stateless mode: no SSE stream, no sessions
+    const noSession: RequestHandler = (_req, res) => {
+      res.status(405).json({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'Method not allowed (stateless server)' },
+        id: null,
+      })
+    }
+    app.get('/mcp', noSession)
+    app.delete('/mcp', noSession)
   }
 
-  // mcp mount (stateless streamable http) — same auth boundary
-  app.post(
-    '/mcp',
-    auth,
-    asyncH(async (req, res) => {
-      await handleMcpRequest(service, agentOf(res), req, res)
-    }),
-  )
-
   const api = express.Router()
-  api.use(auth)
+  api.use(auth('http'))
 
   api.get(
     '/agents',
+    label('phonebook'),
     asyncH(async (_req, res) => {
       res.json(await service.phonebook({ agent: agentOf(res), surface: 'http' }))
     }),
   )
   api.patch(
     '/agents/me',
+    label('checkin'),
     asyncH(async (req, res) => {
       const input = CheckinInputSchema.parse(req.body)
       res.json(await service.checkin({ agent: agentOf(res), surface: 'http' }, input))
@@ -2174,6 +2392,7 @@ export function buildApp(deps: AppDeps): express.Express {
   )
   api.post(
     '/calls',
+    label('call'),
     asyncH(async (req, res) => {
       const input = CallInputSchema.parse(req.body)
       res.status(201).json(await service.call({ agent: agentOf(res), surface: 'http' }, input))
@@ -2181,6 +2400,7 @@ export function buildApp(deps: AppDeps): express.Express {
   )
   api.get(
     '/calls',
+    label('threads'),
     asyncH(async (req, res) => {
       const input = ThreadsQuerySchema.parse(req.query)
       res.json(await service.threads({ agent: agentOf(res), surface: 'http' }, input))
@@ -2188,9 +2408,10 @@ export function buildApp(deps: AppDeps): express.Express {
   )
   api.post(
     '/calls/:id/messages',
+    label('send'),
     asyncH(async (req, res) => {
+      const threadId = IdParamSchema.parse(req.params.id)
       const body = SendInputSchema.omit({ threadId: true }).parse(req.body)
-      const threadId = Number(req.params.id)
       res
         .status(201)
         .json(await service.send({ agent: agentOf(res), surface: 'http' }, { threadId, ...body }))
@@ -2198,26 +2419,25 @@ export function buildApp(deps: AppDeps): express.Express {
   )
   api.get(
     '/calls/:id/messages',
+    label('history'),
     asyncH(async (req, res) => {
+      const threadId = IdParamSchema.parse(req.params.id)
       const q = HistoryQuerySchema.parse(req.query)
-      const threadId = Number(req.params.id)
-      res.json(
-        await service.history({ agent: agentOf(res), surface: 'http' }, { threadId, ...q }),
-      )
+      res.json(await service.history({ agent: agentOf(res), surface: 'http' }, { threadId, ...q }))
     }),
   )
   api.post(
     '/calls/:id/hangup',
+    label('hangup'),
     asyncH(async (req, res) => {
+      const threadId = IdParamSchema.parse(req.params.id)
       const body = HangupInputSchema.omit({ threadId: true }).parse(req.body)
-      const threadId = Number(req.params.id)
-      res.json(
-        await service.hangup({ agent: agentOf(res), surface: 'http' }, { threadId, ...body }),
-      )
+      res.json(await service.hangup({ agent: agentOf(res), surface: 'http' }, { threadId, ...body }))
     }),
   )
   api.get(
     '/inbox',
+    label('listen'),
     asyncH(async (req, res) => {
       const q = ListenQuerySchema.parse(req.query)
       res.json(await service.listen({ agent: agentOf(res), surface: 'http' }, q))
@@ -2225,6 +2445,7 @@ export function buildApp(deps: AppDeps): express.Express {
   )
   api.put(
     '/cursor',
+    label('ack'),
     asyncH(async (req, res) => {
       const input = AckInputSchema.parse(req.body)
       res.json(await service.ack({ agent: agentOf(res), surface: 'http' }, input))
@@ -2233,12 +2454,32 @@ export function buildApp(deps: AppDeps): express.Express {
 
   app.use('/api', api)
 
-  // single error shape for every failure mode
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  // single error shape for every failure mode; boundary failures emit the canonical event here
+  // (PhoneErrors were already emitted inside the service's op() wrapper - no double emit)
+  app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+    const boundaryEvent = (errorCode: 'VALIDATION_ERROR' | 'PAYLOAD_TOO_LARGE'): void => {
+      emitter.emit({
+        ts: clock.now(),
+        op: (res.locals.op as string | undefined) ?? req.path,
+        surface: (res.locals.surface as Surface | undefined) ?? 'http',
+        agent: (res.locals.agent as string | undefined) ?? null,
+        outcome: 'error',
+        errorCode,
+        durationMs: 0,
+      })
+    }
     if (err instanceof ZodError) {
+      boundaryEvent('VALIDATION_ERROR')
+      res.status(422).json({
+        error: { code: 'VALIDATION_ERROR', message: 'invalid input', details: err.flatten() },
+      })
+      return
+    }
+    if (isPayloadTooLarge(err)) {
+      boundaryEvent('PAYLOAD_TOO_LARGE')
       res
-        .status(422)
-        .json({ error: { code: 'VALIDATION_ERROR', message: 'invalid input', details: err.flatten() } })
+        .status(413)
+        .json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'request body too large' } })
       return
     }
     if (err instanceof PhoneError) {
@@ -2254,24 +2495,7 @@ export function buildApp(deps: AppDeps): express.Express {
 }
 ```
 
-Note: `handleMcpRequest` does not exist yet — create a stub now so this task compiles, Task 11 fills it in. Write `src/mcp/tools.ts`:
-
-```ts
-import type { Request, Response } from 'express'
-import type { PhoneService } from '../core/service.js'
-
-// implemented in the MCP task; stub keeps the http adapter compiling
-export async function handleMcpRequest(
-  _service: PhoneService,
-  _agent: string,
-  _req: Request,
-  res: Response,
-): Promise<void> {
-  res.status(501).json({ error: { code: 'INTERNAL', message: 'mcp not wired yet' } })
-}
-```
-
-- [ ] **Step 4: Write `src/http/server.ts`**
+- [ ] **Step 4: Write `src/http/server.ts`** (composition root — the MCP handler is wired here in Task 11; for now it passes none)
 
 ```ts
 import type { AddressInfo } from 'node:net'
@@ -2289,13 +2513,9 @@ export interface RunningServer {
 
 export function startServer(cfg: ServerConfig): Promise<RunningServer> {
   const store = new SqliteStore(cfg.dbPath)
-  const service = new PhoneService(
-    store,
-    new JsonlEmitter(cfg.eventsPath),
-    systemClock,
-    cfg.threadTtlHours * 3600_000,
-  )
-  const app = buildApp({ service })
+  const emitter = new JsonlEmitter(cfg.eventsPath)
+  const service = new PhoneService(store, emitter, systemClock, cfg.threadTtlHours * 3600_000)
+  const app = buildApp({ service, emitter, clock: systemClock })
   return new Promise((resolve) => {
     const srv = app.listen(cfg.port, cfg.bind, () => {
       const port = (srv.address() as AddressInfo).port
@@ -2325,19 +2545,22 @@ Expected: all PASS
 npm test
 npm run typecheck
 npm run lint
-git add src/http src/mcp
-git commit -m "feat(http): add express surface with bearer auth, error mapping, and long-poll inbox"
+git add src/http
+git commit -m "feat(http): add express surface with per-surface auth, boundary events, and long-poll inbox"
 ```
 
 ---
 
 ## Phase 3 — MCP surface
 
-### Task 11: MCP tools + streamable HTTP mount
+### Task 11: MCP tools + wiring into the composition root
 
 **Files:**
-- Modify: `src/mcp/tools.ts` (replace the stub)
+- Create: `src/mcp/tools.ts`
+- Modify: `src/http/server.ts` (pass `mcpHandler`)
 - Test: `test/mcp.test.ts`
+
+Pin note: if `npm install` resolved an SDK version whose `registerTool` option shape differs (very old versions used `paramsSchema`), check `node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.d.ts` and match it; then pin the exact working minor in `package.json`. If `client.connect`/`close` errors on transport verbs, the stateless GET/DELETE 405 handlers in `app.ts` are already in place per the SDK's stateless example.
 
 - [ ] **Step 1: Write the failing test** — `test/mcp.test.ts`
 
@@ -2346,8 +2569,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Server } from 'node:http'
 import { afterEach, describe, expect, test } from 'vitest'
-import { makeService, provision } from '../src/core/testkit.js'
+import { makeService, provision } from '../src/testkit/harness.js'
 import { buildApp } from '../src/http/app.js'
+import { handleMcpRequest } from '../src/mcp/tools.js'
 
 let server: Server | undefined
 afterEach(() => {
@@ -2359,13 +2583,24 @@ async function boot() {
   const h = makeService()
   const ghaToken = provision(h, 'gha-docker-runner')
   const volToken = provision(h, 'volumi')
-  const app = buildApp({ service: h.service })
+  const app = buildApp({
+    service: h.service,
+    emitter: h.emitter,
+    clock: h.clock,
+    mcpHandler: handleMcpRequest,
+  })
   await new Promise<void>((resolve) => {
     server = app.listen(0, '127.0.0.1', () => resolve())
   })
   const addr = server?.address()
   if (addr === null || addr === undefined || typeof addr === 'string') throw new Error('no port')
-  return { h, ghaToken, volToken, url: `http://127.0.0.1:${addr.port}/mcp` }
+  return {
+    h,
+    ghaToken,
+    volToken,
+    base: `http://127.0.0.1:${addr.port}`,
+    url: `http://127.0.0.1:${addr.port}/mcp`,
+  }
 }
 
 async function connect(url: string, token: string): Promise<Client> {
@@ -2383,17 +2618,20 @@ const textOf = (result: { content?: unknown }): string => {
 }
 
 describe('mcp surface', () => {
-  test('lists the ten verbs as tools', async () => {
+  test('lists the ten verbs as tools, with listen defaulting waitMs to 25s', async () => {
     const { url, ghaToken } = await boot()
     const client = await connect(url, ghaToken)
-    const tools = (await client.listTools()).tools.map((t) => t.name).sort()
-    expect(tools).toEqual(
+    const tools = (await client.listTools()).tools
+    expect(tools.map((t) => t.name).sort()).toEqual(
       ['ack', 'call', 'checkin', 'hangup', 'history', 'inbox', 'listen', 'phonebook', 'send', 'threads'].sort(),
     )
+    const listen = tools.find((t) => t.name === 'listen')
+    // assert the default via the published schema rather than a live 25s call
+    expect(JSON.stringify(listen?.inputSchema)).toContain('25000')
     await client.close()
   })
 
-  test('phonebook, call, listen round-trip across two mcp clients', async () => {
+  test('call, send, and listen round-trip across two mcp clients', async () => {
     const { url, ghaToken, volToken } = await boot()
     const gha = await connect(url, ghaToken)
     const vol = await connect(url, volToken)
@@ -2401,12 +2639,19 @@ describe('mcp surface', () => {
     const book = await gha.callTool({ name: 'phonebook', arguments: {} })
     expect(textOf(book)).toContain('volumi')
 
-    await gha.callTool({
+    const call = await gha.callTool({
       name: 'call',
       arguments: { to: 'volumi', subject: 'mcp says hi', body: 'over mcp' },
     })
-    const inbox = await vol.callTool({ name: 'inbox', arguments: {} })
-    expect(textOf(inbox)).toContain('over mcp')
+    const threadId = (JSON.parse(textOf(call)) as { thread: { id: number } }).thread.id
+
+    const got = await vol.callTool({ name: 'listen', arguments: { waitMs: 5000 } })
+    expect(textOf(got)).toContain('over mcp')
+
+    await vol.callTool({ name: 'send', arguments: { threadId, body: 'mcp reply' } })
+    const reply = await gha.callTool({ name: 'listen', arguments: { waitMs: 5000 } })
+    expect(textOf(reply)).toContain('mcp reply')
+
     await gha.close()
     await vol.close()
   })
@@ -2424,15 +2669,21 @@ describe('mcp surface', () => {
     const { url } = await boot()
     await expect(connect(url, 'ap_wrong')).rejects.toThrow()
   })
+
+  test('GET /mcp returns 405 (stateless server)', async () => {
+    const { base, ghaToken } = await boot()
+    const res = await fetch(`${base}/mcp`, { headers: { authorization: `Bearer ${ghaToken}` } })
+    expect(res.status).toBe(405)
+  })
 })
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run test/mcp.test.ts`
-Expected: FAIL — the stub returns 501, so `connect` rejects.
+Expected: FAIL — cannot find module `../src/mcp/tools.js`
 
-- [ ] **Step 3: Replace `src/mcp/tools.ts` with the real adapter**
+- [ ] **Step 3: Write `src/mcp/tools.ts`**
 
 ```ts
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -2478,7 +2729,10 @@ export function buildMcpServer(service: PhoneService, agent: string): McpServer 
   )
   server.registerTool(
     'phonebook',
-    { description: 'List registered agents with presence (lastSeenAt, listening).', inputSchema: {} },
+    {
+      description: 'List registered agents with presence (lastSeenAt, listening).',
+      inputSchema: {},
+    },
     wrap(() => service.phonebook(ctx)),
   )
   server.registerTool(
@@ -2505,17 +2759,17 @@ export function buildMcpServer(service: PhoneService, agent: string): McpServer 
     'listen',
     {
       description:
-        'Long-poll for unacked messages; returns immediately if any exist. Max waitMs 60000. For a background "ring" while you work, use the agentphone CLI: `agentphone listen --wait 3600` as a background task.',
-      inputSchema: {
-        waitMs: z.number().int().min(0).max(60_000).default(25_000),
-        threadId: z.number().int().optional(),
-      },
+        'Long-poll for unacked messages; returns immediately if any exist. Max waitMs 60000. For a background "ring" while you work, use the agentphone CLI: run `agentphone listen --wait 3600` as a background task.',
+      inputSchema: { waitMs: z.number().int().min(0).max(60_000).default(25_000) },
     },
-    wrap((a: { waitMs: number; threadId?: number }) => service.listen(ctx, a)),
+    wrap((a: { waitMs: number }) => service.listen(ctx, a)),
   )
   server.registerTool(
     'inbox',
-    { description: 'Peek unacked messages (voicemail) without waiting or acking.', inputSchema: {} },
+    {
+      description: 'Peek unacked messages (voicemail) without waiting. Messages stay unacked.',
+      inputSchema: {},
+    },
     wrap(() => service.listen(ctx, { waitMs: 0 })),
   )
   server.registerTool(
@@ -2579,19 +2833,33 @@ export async function handleMcpRequest(
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Wire the handler in `src/http/server.ts`**
+
+Add the import:
+
+```ts
+import { handleMcpRequest } from '../mcp/tools.js'
+```
+
+and change the `buildApp` call to:
+
+```ts
+  const app = buildApp({ service, emitter, clock: systemClock, mcpHandler: handleMcpRequest })
+```
+
+- [ ] **Step 5: Run test to verify it passes**
 
 Run: `npx vitest run test/mcp.test.ts`
-Expected: all PASS. If `registerTool`'s option key differs in the installed SDK version (some versions use `inputSchema` as a zod raw shape — as written — while very old ones used `paramsSchema`), check `node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.d.ts` and match it.
+Expected: all PASS
 
-- [ ] **Step 5: Full suite + typecheck + lint, commit**
+- [ ] **Step 6: Full suite + typecheck + lint, commit**
 
 ```powershell
 npm test
 npm run typecheck
 npm run lint
-git add src/mcp test/mcp.test.ts
-git commit -m "feat(mcp): expose the ten verbs as stateless streamable-http tools"
+git add src/mcp src/http/server.ts test/mcp.test.ts
+git commit -m "feat(mcp): expose the ten verbs as stateless streamable-http tools wired at the composition root"
 ```
 
 **Phase 2-3 checkpoint (per project CLAUDE.md):** dispatch parallel spec-conformance + code-quality reviews of `src/http` + `src/mcp` before starting Phase 4. Fix HIGH/MEDIUM findings before continuing.
@@ -2611,7 +2879,7 @@ git commit -m "feat(mcp): expose the ten verbs as stateless streamable-http tool
 ```ts
 import type { Server } from 'node:http'
 import { afterEach, describe, expect, test } from 'vitest'
-import { invite, makeService, type Harness } from '../core/testkit.js'
+import { invite, makeService, type Harness } from '../testkit/harness.js'
 import { buildApp } from '../http/app.js'
 import { ClientError, PhoneClient, registerAgent } from './client.js'
 
@@ -2622,7 +2890,7 @@ afterEach(() => {
 })
 
 async function boot(h: Harness): Promise<string> {
-  const app = buildApp({ service: h.service })
+  const app = buildApp({ service: h.service, emitter: h.emitter, clock: h.clock })
   await new Promise<void>((resolve) => {
     server = app.listen(0, '127.0.0.1', () => resolve())
   })
@@ -2768,10 +3036,8 @@ export class PhoneClient {
       body: input.body,
     })
   }
-  inbox(waitMs = 0, threadId?: number): Promise<ListenOutput> {
-    const q = new URLSearchParams({ waitMs: String(waitMs) })
-    if (threadId !== undefined) q.set('threadId', String(threadId))
-    return this.req('GET', `/api/inbox?${q.toString()}`, ListenOutputSchema)
+  inbox(waitMs = 0): Promise<ListenOutput> {
+    return this.req('GET', `/api/inbox?waitMs=${waitMs}`, ListenOutputSchema)
   }
   ack(throughMessageId: number): Promise<AckOutput> {
     return this.req('PUT', '/api/cursor', AckOutputSchema, { throughMessageId })
@@ -2801,18 +3067,30 @@ git add src/client
 git commit -m "feat(client): add typed fetch client validating responses against core contracts"
 ```
 
-### Task 13: CLI command logic (listen loop, --to resolution, formatting)
+### Task 13: CLI command logic (listen loop, exit codes, stdin bodies, --to, --all)
 
 **Files:**
 - Create: `src/cli/commands.ts`
 - Test: `src/cli/commands.test.ts`
+
+All CLI behavior with any logic lives here as small functions over narrow client interfaces (interface segregation), so `index.ts` stays wiring-only.
 
 - [ ] **Step 1: Write the failing test** — `src/cli/commands.test.ts`
 
 ```ts
 import { describe, expect, test } from 'vitest'
 import type { ListenOutput, MessageView, ThreadView } from '../core/contracts.js'
-import { listenCommand, resolvePeerThread, type ListenClient } from './commands.js'
+import {
+  ackAll,
+  bodyFrom,
+  exitCodeFor,
+  listenCommand,
+  resolvePeerThread,
+  sendTo,
+  type AckAllClient,
+  type ListenClient,
+  type SendToClient,
+} from './commands.js'
 
 const msg = (id: number, body: string): MessageView => ({
   id,
@@ -2824,11 +3102,16 @@ const msg = (id: number, body: string): MessageView => ({
   createdAt: 1000,
 })
 
-const threadView = (id: number, subject: string, status: 'open' | 'ended'): ThreadView => ({
+const threadView = (
+  id: number,
+  subject: string,
+  status: 'open' | 'ended',
+  participants: [string, string] = ['gha-docker-runner', 'volumi'],
+): ThreadView => ({
   id,
   subject,
-  participants: ['gha-docker-runner', 'volumi'],
-  openedBy: 'gha-docker-runner',
+  participants,
+  openedBy: participants[0],
   status,
   endedBy: null,
   endNote: null,
@@ -2837,8 +3120,12 @@ const threadView = (id: number, subject: string, status: 'open' | 'ended'): Thre
 })
 
 describe('resolvePeerThread', () => {
-  test('resolves the single open thread with the peer', () => {
-    const threads = [threadView(1, 'ci', 'open'), threadView(2, 'old', 'ended')]
+  test('resolves the single open thread with the peer, excluding other peers', () => {
+    const threads = [
+      threadView(1, 'ci', 'open'),
+      threadView(2, 'old', 'ended'),
+      threadView(3, 'other-peer', 'open', ['gha-docker-runner', 'lab7']),
+    ]
     expect(resolvePeerThread(threads, 'volumi')).toBe(1)
   })
   test('errors helpfully when there is no open thread', () => {
@@ -2897,6 +3184,59 @@ describe('listenCommand', () => {
     expect(out.join('\n')).toMatch(/no messages/i)
   })
 })
+
+describe('exitCodeFor', () => {
+  test('delivered=0, timeout=2 (the background-ring contract)', () => {
+    expect(exitCodeFor('delivered')).toBe(0)
+    expect(exitCodeFor('timeout')).toBe(2)
+  })
+})
+
+describe('bodyFrom', () => {
+  test('prefers the -m message and falls back to stdin', async () => {
+    expect(await bodyFrom('inline', () => Promise.resolve('piped'))).toBe('inline')
+    expect(await bodyFrom(undefined, () => Promise.resolve('piped'))).toBe('piped')
+  })
+})
+
+describe('sendTo', () => {
+  test('resolves the open thread with the peer and sends into it', async () => {
+    const sent: Array<{ threadId: number; body: string }> = []
+    const client: SendToClient = {
+      threads: () => Promise.resolve({ threads: [threadView(4, 'ci', 'open')] }),
+      send: (input) => {
+        sent.push(input)
+        return Promise.resolve({ message: msg(9, input.body) })
+      },
+    }
+    const out = await sendTo(client, 'volumi', 'hello there')
+    expect(sent).toEqual([{ threadId: 4, body: 'hello there' }])
+    expect(out.message.id).toBe(9)
+  })
+
+  test('propagates resolution errors (no open thread)', async () => {
+    const client: SendToClient = {
+      threads: () => Promise.resolve({ threads: [] }),
+      send: () => Promise.reject(new Error('should not send')),
+    }
+    await expect(sendTo(client, 'volumi', 'x')).rejects.toThrow(/no open thread/)
+  })
+})
+
+describe('ackAll', () => {
+  test('acks through the current inbox cursor', async () => {
+    const acked: number[] = []
+    const client: AckAllClient = {
+      inbox: () => Promise.resolve({ messages: [msg(5, 'a'), msg(6, 'b')], cursor: 6 }),
+      ack: (through) => {
+        acked.push(through)
+        return Promise.resolve({ ackedThroughMessageId: through })
+      },
+    }
+    expect(await ackAll(client)).toBe(6)
+    expect(acked).toEqual([6])
+  })
+})
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -2907,18 +3247,35 @@ Expected: FAIL — cannot find module `./commands.js`
 - [ ] **Step 3: Write `src/cli/commands.ts`**
 
 ```ts
-import type { AckOutput, ListenOutput, MessageView, ThreadView } from '../core/contracts.js'
+import type {
+  AckOutput,
+  ListenOutput,
+  MessageView,
+  SendInput,
+  SendOutput,
+  ThreadsOutput,
+  ThreadView,
+} from '../core/contracts.js'
 import { ClientError } from '../client/client.js'
 
 export interface ListenClient {
-  inbox(waitMs?: number, threadId?: number): Promise<ListenOutput>
+  inbox(waitMs?: number): Promise<ListenOutput>
+  ack(throughMessageId: number): Promise<AckOutput>
+}
+
+export interface SendToClient {
+  threads(status?: 'open' | 'ended' | 'all'): Promise<ThreadsOutput>
+  send(input: SendInput): Promise<SendOutput>
+}
+
+export interface AckAllClient {
+  inbox(waitMs?: number): Promise<ListenOutput>
   ack(throughMessageId: number): Promise<AckOutput>
 }
 
 export interface ListenOptions {
   waitSeconds: number
   autoAck: boolean
-  threadId?: number
 }
 
 const POLL_CAP_MS = 60_000
@@ -2926,6 +3283,17 @@ const POLL_CAP_MS = 60_000
 export function formatMessage(m: MessageView): string {
   const tag = m.kind === 'system' ? ' [system]' : ''
   return `#${m.id} thread=${m.threadId} from=${m.sender}${tag}\n${m.body}`
+}
+
+export function exitCodeFor(result: 'delivered' | 'timeout'): 0 | 2 {
+  return result === 'delivered' ? 0 : 2
+}
+
+export async function bodyFrom(
+  message: string | undefined,
+  readStdin: () => Promise<string>,
+): Promise<string> {
+  return message ?? (await readStdin())
 }
 
 export async function listenCommand(
@@ -2936,7 +3304,7 @@ export async function listenCommand(
   const deadline = Date.now() + opts.waitSeconds * 1000
   for (;;) {
     const remaining = deadline - Date.now()
-    const { messages } = await client.inbox(Math.max(0, Math.min(POLL_CAP_MS, remaining)), opts.threadId)
+    const { messages } = await client.inbox(Math.max(0, Math.min(POLL_CAP_MS, remaining)))
     if (messages.length > 0) {
       for (const m of messages) out(formatMessage(m))
       const lastId = messages[messages.length - 1]?.id ?? 0
@@ -2972,6 +3340,18 @@ export function resolvePeerThread(threads: ThreadView[], peer: string): number {
       .join(', ')} - use --thread <id>`,
   )
 }
+
+export async function sendTo(client: SendToClient, peer: string, body: string): Promise<SendOutput> {
+  const { threads } = await client.threads('open')
+  const threadId = resolvePeerThread(threads, peer)
+  return client.send({ threadId, body })
+}
+
+export async function ackAll(client: AckAllClient): Promise<number> {
+  const { cursor } = await client.inbox(0)
+  const res = await client.ack(cursor)
+  return res.ackedThroughMessageId
+}
 ```
 
 - [ ] **Step 4: Run test to verify it passes, commit**
@@ -2980,134 +3360,35 @@ Run: `npx vitest run src/cli/commands.test.ts` — expected: all PASS
 
 ```powershell
 git add src/cli
-git commit -m "feat(cli): add listen loop and peer-thread resolution logic"
+git commit -m "feat(cli): add tested command logic - listen loop, exit codes, stdin bodies, peer resolution"
 ```
 
-### Task 14: Admin functions + commander wiring
+### Task 14: Commander wiring
 
 **Files:**
-- Create: `src/cli/admin.ts`, `src/cli/index.ts`
-- Test: `src/cli/admin.test.ts`
+- Create: `src/cli/index.ts`
 
-- [ ] **Step 1: Write the failing test** — `src/cli/admin.test.ts`
+Pure wiring — every branch with logic was extracted and tested in Task 13; provisioning functions come from `src/core/provisioning.ts` (tested in Task 6). Verified by typecheck/lint here and the built-CLI smoke in Task 17.
 
-```ts
-import { describe, expect, test } from 'vitest'
-import { makeService } from '../core/testkit.js'
-import { addAgent, createInvite, revokeAgent } from './admin.js'
-
-describe('admin', () => {
-  test('createInvite produces a code the service accepts once', async () => {
-    const h = makeService()
-    const { code } = createInvite(h.store, h.clock, {})
-    const out = await h.service.register({ name: 'volumi', inviteCode: code }, 'http')
-    expect(out.token).toMatch(/^ap_/)
-    await expect(h.service.register({ name: 'other', inviteCode: code }, 'http')).rejects.toMatchObject({
-      code: 'INVITE_INVALID',
-    })
-  })
-
-  test('createInvite honors pinned name and ttl', async () => {
-    const h = makeService()
-    const { code } = createInvite(h.store, h.clock, { pinnedName: 'lab7', ttlHours: 1 })
-    await expect(h.service.register({ name: 'volumi', inviteCode: code }, 'http')).rejects.toMatchObject({
-      code: 'INVITE_INVALID',
-    })
-    h.clock.advance(3600_001)
-    await expect(h.service.register({ name: 'lab7', inviteCode: code }, 'http')).rejects.toMatchObject({
-      code: 'INVITE_INVALID',
-    })
-  })
-
-  test('addAgent mints a working token; revokeAgent kills it', () => {
-    const h = makeService()
-    const { token } = addAgent(h.store, h.clock, 'volumi')
-    expect(h.service.authenticate(token).name).toBe('volumi')
-    revokeAgent(h.store, 'volumi')
-    expect(() => h.service.authenticate(token)).toThrow()
-  })
-
-  test('addAgent rejects a taken name', () => {
-    const h = makeService()
-    addAgent(h.store, h.clock, 'volumi')
-    expect(() => addAgent(h.store, h.clock, 'volumi')).toThrow(/already/)
-  })
-})
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `npx vitest run src/cli/admin.test.ts`
-Expected: FAIL — cannot find module `./admin.js`
-
-- [ ] **Step 3: Write `src/cli/admin.ts`**
-
-```ts
-import type { AgentRecord, AgentStore, Clock, InviteStore } from '../core/ports.js'
-import { hashSecret, newInviteCode, newToken } from '../core/tokens.js'
-
-export function createInvite(
-  store: InviteStore,
-  clock: Clock,
-  opts: { pinnedName?: string; ttlHours?: number },
-): { code: string; expiresAt: number } {
-  const code = newInviteCode()
-  const expiresAt = clock.now() + (opts.ttlHours ?? 24) * 3600_000
-  store.insertInvite({
-    codeHash: hashSecret(code),
-    pinnedName: opts.pinnedName ?? null,
-    expiresAt,
-    usedBy: null,
-    usedAt: null,
-    createdAt: clock.now(),
-  })
-  return { code, expiresAt }
-}
-
-export function addAgent(
-  store: AgentStore,
-  clock: Clock,
-  name: string,
-): { name: string; token: string } {
-  if (store.getAgent(name)) throw new Error(`agent "${name}" already exists`)
-  const token = newToken()
-  store.insertAgent({
-    name,
-    tokenHash: hashSecret(token),
-    status: null,
-    lastSeenAt: clock.now(),
-    createdAt: clock.now(),
-  })
-  return { name, token }
-}
-
-export function revokeAgent(store: AgentStore, name: string): void {
-  if (!store.getAgent(name)) throw new Error(`agent "${name}" does not exist`)
-  store.deleteAgent(name)
-}
-
-export function listAgentRecords(store: AgentStore): AgentRecord[] {
-  return store.listAgents()
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `npx vitest run src/cli/admin.test.ts`
-Expected: all PASS
-
-- [ ] **Step 5: Write `src/cli/index.ts`** (thin wiring — no logic; verified by typecheck/lint and the Task 15 story)
+- [ ] **Step 1: Write `src/cli/index.ts`**
 
 ```ts
 #!/usr/bin/env node
 import { Command } from 'commander'
 import { systemClock } from '../core/clock.js'
 import { loadClientConfig, loadServerConfig } from '../core/config.js'
+import { addAgent, createInvite, listAgentRecords, revokeAgent } from '../core/provisioning.js'
 import { PhoneClient, registerAgent } from '../client/client.js'
 import { startServer } from '../http/server.js'
 import { SqliteStore } from '../store/sqlite.js'
-import { addAgent, createInvite, listAgentRecords, revokeAgent } from './admin.js'
-import { formatMessage, listenCommand, resolvePeerThread } from './commands.js'
+import {
+  ackAll,
+  bodyFrom,
+  exitCodeFor,
+  formatMessage,
+  listenCommand,
+  sendTo,
+} from './commands.js'
 
 const out = (line: string): void => {
   process.stdout.write(line + '\n')
@@ -3132,8 +3413,6 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8').trim()
 }
 
-const bodyFrom = async (m?: string): Promise<string> => m ?? (await readStdin())
-
 const adminStore = (): SqliteStore =>
   new SqliteStore(process.env.AGENTPHONE_DB ?? './agentphone.db')
 
@@ -3149,7 +3428,9 @@ program
   .action(async (o: { name: string; invite: string; url?: string }) => {
     const url = o.url ?? process.env.AGENTPHONE_URL
     if (!url) fail(new Error('pass --url or set AGENTPHONE_URL'))
-    const res = await registerAgent(url as string, { name: o.name, inviteCode: o.invite }).catch(fail)
+    const res = await registerAgent(url as string, { name: o.name, inviteCode: o.invite }).catch(
+      fail,
+    )
     out(`registered "${res.name}"`)
     out(`token (shown once - store it): ${res.token}`)
     out(`set AGENTPHONE_TOKEN=${res.token}`)
@@ -3176,9 +3457,11 @@ program
   .requiredOption('--subject <subject>')
   .option('-m, --message <body>')
   .action(async (agent: string, o: { subject: string; message?: string }) => {
-    const body = o.message // first message optional on call; no stdin fallback here
-    const res = await client().call({ to: agent, subject: o.subject, body }).catch(fail)
+    const res = await client()
+      .call({ to: agent, subject: o.subject, body: o.message })
+      .catch(fail)
     out(`call opened: thread #${res.thread.id} "${res.thread.subject}" with ${agent}`)
+    if (res.message) out(`sent #${res.message.id}`)
   })
 
 program
@@ -3188,38 +3471,37 @@ program
   .option('-m, --message <body>')
   .action(async (o: { thread?: string; to?: string; message?: string }) => {
     const c = client()
-    const body = await bodyFrom(o.message)
-    let threadId: number
-    if (o.thread !== undefined) threadId = Number(o.thread)
-    else if (o.to !== undefined) {
-      const { threads } = await c.threads('open').catch(fail)
-      threadId = resolvePeerThread(threads, o.to)
-    } else return fail(new Error('pass --thread <id> or --to <agent>'))
-    const res = await c.send({ threadId, body }).catch(fail)
-    out(`sent #${res.message.id} to ${res.message.recipient} (thread #${threadId})`)
+    const body = await bodyFrom(o.message, readStdin)
+    if (o.thread !== undefined) {
+      const res = await c.send({ threadId: Number(o.thread), body }).catch(fail)
+      out(`sent #${res.message.id} to ${res.message.recipient} (thread #${res.message.threadId})`)
+    } else if (o.to !== undefined) {
+      const res = await sendTo(c, o.to, body).catch(fail)
+      out(`sent #${res.message.id} to ${res.message.recipient} (thread #${res.message.threadId})`)
+    } else {
+      fail(new Error('pass --thread <id> or --to <agent>'))
+    }
   })
 
 program
   .command('listen')
   .option('--wait <seconds>', 'total seconds to wait', '3600')
-  .option('--thread <id>')
   .option('--ack', 'auto-ack delivered messages', false)
-  .action(async (o: { wait: string; thread?: string; ack: boolean }) => {
+  .action(async (o: { wait: string; ack: boolean }) => {
     const result = await listenCommand(
       client(),
-      {
-        waitSeconds: Number(o.wait),
-        autoAck: o.ack,
-        threadId: o.thread === undefined ? undefined : Number(o.thread),
-      },
+      { waitSeconds: Number(o.wait), autoAck: o.ack },
       out,
     ).catch(fail)
-    process.exitCode = result === 'delivered' ? 0 : 2
+    process.exitCode = exitCodeFor(result)
   })
 
 program.command('inbox').action(async () => {
   const res = await client().inbox().catch(fail)
-  if (res.messages.length === 0) return out('no voicemail')
+  if (res.messages.length === 0) {
+    out('no voicemail')
+    return
+  }
   for (const m of res.messages) out(formatMessage(m))
   out(`unacked - when processed, run: agentphone ack --through ${res.cursor}`)
 })
@@ -3230,12 +3512,15 @@ program
   .option('--all', 'ack everything currently in the inbox', false)
   .action(async (o: { through?: string; all: boolean }) => {
     const c = client()
-    let through: number
-    if (o.all) through = (await c.inbox().catch(fail)).cursor
-    else if (o.through !== undefined) through = Number(o.through)
-    else return fail(new Error('pass --through <id> or --all'))
-    const res = await c.ack(through).catch(fail)
-    out(`acked through #${res.ackedThroughMessageId}`)
+    if (o.all) {
+      const through = await ackAll(c).catch(fail)
+      out(`acked through #${through}`)
+    } else if (o.through !== undefined) {
+      const res = await c.ack(Number(o.through)).catch(fail)
+      out(`acked through #${res.ackedThroughMessageId}`)
+    } else {
+      fail(new Error('pass --through <id> or --all'))
+    }
   })
 
 program
@@ -3274,20 +3559,18 @@ program.command('serve').action(async () => {
 
 const admin = program.command('admin').description('server-host provisioning (direct db access)')
 
-admin
-  .command('add <name>')
-  .action((name: string) => {
-    const store = adminStore()
-    try {
-      const res = addAgent(store, systemClock, name)
-      out(`agent "${res.name}" added`)
-      out(`token (shown once - deliver securely): ${res.token}`)
-    } catch (e) {
-      fail(e)
-    } finally {
-      store.close()
-    }
-  })
+admin.command('add <name>').action((name: string) => {
+  const store = adminStore()
+  try {
+    const res = addAgent(store, systemClock, name)
+    out(`agent "${res.name}" added`)
+    out(`token (shown once - deliver securely): ${res.token}`)
+  } catch (e) {
+    fail(e)
+  } finally {
+    store.close()
+  }
+})
 
 admin
   .command('invite')
@@ -3317,38 +3600,36 @@ admin.command('list').action(() => {
   }
 })
 
-admin
-  .command('revoke <name>')
-  .action((name: string) => {
-    const store = adminStore()
-    try {
-      revokeAgent(store, name)
-      out(`agent "${name}" revoked`)
-    } catch (e) {
-      fail(e)
-    } finally {
-      store.close()
-    }
-  })
+admin.command('revoke <name>').action((name: string) => {
+  const store = adminStore()
+  try {
+    revokeAgent(store, name)
+    out(`agent "${name}" revoked`)
+  } catch (e) {
+    fail(e)
+  } finally {
+    store.close()
+  }
+})
 
 program.parseAsync(process.argv).catch(fail)
 ```
 
-- [ ] **Step 6: Typecheck, lint, full suite, commit**
+- [ ] **Step 2: Typecheck, lint, full suite, commit**
 
 ```powershell
 npm run typecheck
 npm run lint
 npm test
-git add src/cli
-git commit -m "feat(cli): wire commander surface with admin provisioning and serve"
+git add src/cli/index.ts
+git commit -m "feat(cli): wire commander surface over tested command logic and core provisioning"
 ```
 
 ---
 
-## Phase 5 — Integration story + docs
+## Phase 5 — Integration story, CI, docs
 
-### Task 15: End-to-end story test (incl. restart persistence)
+### Task 15: End-to-end story test (incl. restart persistence + 401)
 
 **Files:**
 - Test: `test/story.test.ts`
@@ -3363,12 +3644,12 @@ import { describe, expect, test } from 'vitest'
 import { PhoneClient, registerAgent } from '../src/client/client.js'
 import { systemClock } from '../src/core/clock.js'
 import type { ServerConfig } from '../src/core/config.js'
+import { createInvite } from '../src/core/provisioning.js'
 import { startServer } from '../src/http/server.js'
 import { SqliteStore } from '../src/store/sqlite.js'
-import { createInvite } from '../src/cli/admin.js'
 
 describe('the whole story', () => {
-  test('register, call, listen-wake, voicemail, ack, hangup, restart persistence', async () => {
+  test('register, call, listen-wake, voicemail, ack, hangup, restart persistence, 401', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'agentphone-story-'))
     const cfg: ServerConfig = {
       port: 0,
@@ -3395,6 +3676,12 @@ describe('the whole story', () => {
     const vol = await registerAgent(url, { name: 'volumi', inviteCode: volInvite.code })
     const ghaClient = new PhoneClient({ url, token: gha.token })
     const volClient = new PhoneClient({ url, token: vol.token })
+
+    // a wrong token is rejected on an authenticated route
+    const badToken = await fetch(`${url}/api/agents`, {
+      headers: { authorization: 'Bearer ap_wrong' },
+    })
+    expect(badToken.status).toBe(401)
 
     // volumi parks a listen (the background ring); gha calls - the listen wakes
     const parked = volClient.inbox(10_000)
@@ -3448,13 +3735,58 @@ Expected: PASS. This is the acceptance-criteria test — if it fails, the bug is
 
 ```powershell
 git add test/story.test.ts
-git commit -m "test(integration): pin the end-to-end story including restart persistence"
+git commit -m "test(integration): pin the end-to-end story including restart persistence and 401"
 ```
 
-### Task 16: README, impl notes, final verification
+### Task 16: CI matrix (Windows + macOS — acceptance criterion 6)
 
 **Files:**
-- Create: `README.md`, `docs/increment-1-agentphone-core/impl.md`
+- Create: `.github/workflows/ci.yml`
+
+- [ ] **Step 1: Write `.github/workflows/ci.yml`**
+
+```yaml
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+```
+
+(macOS runners are arm64 — this also proves the better-sqlite3 prebuild story for the MacBook. CI runs verify on push/PR; record the first green matrix in `impl.md`.)
+
+- [ ] **Step 2: Commit**
+
+```powershell
+git add .github
+git commit -m "ci: add windows+macos node 20/22 matrix"
+```
+
+### Task 17: README, impl notes, final verification
+
+**Files:**
+- Create: `README.md`
+- Modify: `docs/increment-1-agentphone-core/impl.md` (fill Verification evidence; append any execution deviations)
 
 - [ ] **Step 1: Write `README.md`**
 
@@ -3513,32 +3845,11 @@ agentphone hangup 3 --note "done"
 ```
 
 **The ring:** background `agentphone listen` from your agent harness; the process exits
-when a message arrives, which re-invokes the agent with the message as output.
+when a message arrives (exit 0) or the window closes empty (exit 2), which re-invokes
+the agent with the messages as output.
 ````
 
-- [ ] **Step 2: Write `docs/increment-1-agentphone-core/impl.md`**
-
-```markdown
-# Increment 1 — implementation notes
-
-## Decisions & deviations
-
-(record here as they happen during execution)
-
-## Review findings & resolutions
-
-(parallel spec-conformance + code-quality reviews at each phase checkpoint)
-
-## Deferred debt
-
-(audit at task boundaries; nothing may hide in scattered review notes)
-
-## Verification evidence
-
-(final build/test/lint output summary, story-test result, both-OS notes)
-```
-
-- [ ] **Step 3: Final verification (all must pass)**
+- [ ] **Step 2: Final verification (all must pass)**
 
 ```powershell
 npm run build
@@ -3550,32 +3861,39 @@ npm test
 Expected: build emits `dist/agentphone.js`; typecheck/lint clean; full suite green.
 Record the outcome in `impl.md` under Verification evidence.
 
-- [ ] **Step 4: Smoke the built CLI end-to-end on this machine**
+- [ ] **Step 3: Smoke the built CLI end-to-end on this machine (incl. the exit-code contract)**
 
 ```powershell
+$env:AGENTPHONE_DB = "$env:TEMP\agentphone-smoke.db"
 node dist/agentphone.js admin invite
-# in another shell: $env:AGENTPHONE_BIND="127.0.0.1"; node dist/agentphone.js serve
-# then: node dist/agentphone.js register --name smoke-test --invite <code> --url http://127.0.0.1:4747
+# in a second shell: $env:AGENTPHONE_DB="$env:TEMP\agentphone-smoke.db"; node dist/agentphone.js serve
+node dist/agentphone.js register --name smoke-test --invite <code> --url http://127.0.0.1:4747
+$env:AGENTPHONE_URL = "http://127.0.0.1:4747"
+$env:AGENTPHONE_TOKEN = "<token printed above>"
+node dist/agentphone.js listen --wait 1
+$LASTEXITCODE   # expected: 2 (timeout, nothing to deliver)
 ```
 
-Expected: invite prints; registration prints a token. Clean up: `node dist/agentphone.js admin revoke smoke-test`, delete `agentphone.db*`.
+Expected: invite prints; registration prints a token; `listen --wait 1` prints "no messages"
+and exits with code 2. Stop the serve shell; delete `$env:TEMP\agentphone-smoke.db*`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```powershell
 git add README.md docs/increment-1-agentphone-core/impl.md
-git commit -m "docs: add quickstart readme and increment-1 impl notes scaffold"
+git commit -m "docs: add quickstart readme and record increment-1 verification evidence"
 ```
 
 **Final holistic review (per project CLAUDE.md):** one comprehensive review pass over the whole increment against design.md, plan.md, overview.md, and the conventions — then PR via `gh pr create --fill`, fix findings, re-verify, merge with `gh pr merge --merge --delete-branch`.
 
 ---
 
-## Plan self-review (completed by plan author)
+## Plan self-review (completed by plan author, rev 2)
 
-1. **Spec coverage:** every design verb, surface, error code, TTL rule, delivery guarantee, config key, observability requirement, and acceptance criterion maps to a task (verbs/TTL/delivery → Tasks 6-8; HTTP+auth → Task 10; MCP → Task 11; CLI incl. ring/stdin/--to → Tasks 13-14; invites/admin → Tasks 6/14; restart persistence + jsonl events → Task 15; both-OS quickstart → Task 16).
+1. **Spec coverage:** every design verb, surface, error code (incl. 413), TTL rule, delivery guarantee (incl. the 500-message batch cap), config key, observability requirement (incl. boundary events), and acceptance criterion maps to a task (verbs → Tasks 6-8; HTTP+auth+boundary events → Task 10; MCP incl. send/listen tools → Task 11; CLI ring/exit codes/stdin/--to/--all → Tasks 13-14+17; invites/provisioning → Task 6; restart persistence + jsonl + 401 → Task 15; both-OS → Task 16 CI matrix + Task 17 smoke).
 2. **Placeholder scan:** no TBDs; every code step carries the full code.
-3. **Type consistency:** port method names, schema names, and `CallCtx`/`Surface` usage were cross-checked across Tasks 2-14 (e.g. `listUnacked(recipient, afterId, threadId?)` is identical in ports, store, service, and tests).
+3. **Type consistency:** port signatures (`listUnacked(recipient, afterId, limit)`), schema names, `CallCtx`/`Surface`, `buildApp` deps (`service, emitter, clock, mcpHandler?`), and `.js` ESM import suffixes are consistent across all tasks.
+4. **Review-gate traceability:** every HIGH/MEDIUM finding from the plan-review gate maps to a concrete change in this revision; see `impl.md` → Review findings & resolutions.
 
 
 

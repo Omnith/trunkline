@@ -115,10 +115,12 @@ GET   /api/inbox?waitMs=0..60000                  inbox (waitMs=0) / listen (wai
 PUT   /api/cursor                {throughMessageId}   ack
 ```
 
-Auth: `Authorization: Bearer ap_<random>`; server stores SHA-256 hash only, constant-time compare.
+Auth: `Authorization: Bearer ap_<random>`; the server stores only the SHA-256 hash and verifies
+tokens by indexed hash lookup (the raw token is never compared directly).
 Errors: single shape `{ error: { code, message, details? } }` with conventional statuses
 (401 bad token, 404 unknown thread or recipient, 409 name already taken, 410 invite expired
-or used, 422 validation).
+or used, 413 payload too large, 422 validation). Boundary rejections (validation, oversized
+bodies) emit a canonical event too, so every request yields exactly one event.
 
 ### MCP
 
@@ -163,7 +165,14 @@ is opt-in sugar for casual checks; default is explicit ack.
 - **Long-poll implementation:** check-then-park. Query unacked; if empty, register an in-process
   waiter keyed by recipient; message insert wakes waiters, which re-query. better-sqlite3 is
   synchronous, so there is no missed-wakeup window between check and park.
-- **Ordering:** global message-id order (single writer, AUTOINCREMENT).
+- **Ordering:** global message-id order (single writer, AUTOINCREMENT). Global monotonicity of
+  message ids across restarts is a deliberate contract the cursor model relies on; restoring the
+  DB from a backup would violate it (out of scope this increment).
+- **Batch cap:** a single `listen`/`inbox` delivers at most 500 messages (named constant, stated
+  contract); remaining messages arrive on the next poll.
+- **No per-thread filtering on `listen`/`inbox`:** a thread-filtered listen cannot safely drive
+  the single global cursor (acking a filtered slice would skip unseen messages in other threads).
+  `history` is the per-thread read.
 
 ## Persistence (SQLite, WAL)
 
