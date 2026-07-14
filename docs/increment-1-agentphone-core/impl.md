@@ -162,6 +162,12 @@ Windows host, Node local toolchain). All gates run as direct commands with real 
   Node 20 & 22, running `npm ci` → build → typecheck → lint → test. Actual cross-OS runs execute on
   push to `main` / pull_request (GitHub Actions) — not runnable on the local host; wiring verified by
   inspection only.
+- **CI matrix, live runs (PR #1, 2026-07-14)** — after the Node 22/24 revision (see support-floor
+  note above), the full matrix went green on the PR head: windows-latest and macos-latest × Node
+  22/24, all four legs passing `npm ci` → build → typecheck → lint → test (70 tests). Acceptance
+  criterion 6 verified on real runners for both OSes. Final suite at merge: **70 tests**
+  (67 + batch-cap + resolvePeerThread-fallback + sendTo-ended-call tests). PR #1 merged to `main`
+  as `e3d8523` (merge commit, full history preserved).
 
 ### Execution deviations (Tasks 15–17)
 
