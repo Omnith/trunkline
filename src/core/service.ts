@@ -6,6 +6,10 @@ import type {
   CallOutput,
   CheckinInput,
   CheckinOutput,
+  HangupInput,
+  HangupOutput,
+  HistoryInput,
+  HistoryOutput,
   ListenInput,
   ListenOutput,
   MessageView,
@@ -14,6 +18,8 @@ import type {
   RegisterOutput,
   SendInput,
   SendOutput,
+  ThreadsInput,
+  ThreadsOutput,
   ThreadView,
 } from './contracts.js'
 import { PhoneError } from './errors.js'
@@ -280,6 +286,58 @@ export class PhoneService {
       const next = Math.max(current, Math.min(input.throughMessageId, cap))
       this.store.setCursor(ctx.agent, next)
       return { ackedThroughMessageId: next }
+    })
+  }
+
+  // --- lifecycle ---
+  hangup(ctx: CallCtx, input: HangupInput): Promise<HangupOutput> {
+    return this.op('hangup', ctx.surface, ctx.agent, (ev) => {
+      const thread = this.requireParticipant(input.threadId, ctx.agent)
+      const now = this.clock.now()
+      const other = this.otherParticipant(thread, ctx.agent)
+      if (input.note !== undefined) {
+        const id = this.store.insertMessage({
+          threadId: thread.id,
+          sender: ctx.agent,
+          recipient: other,
+          body: input.note,
+          kind: 'system',
+          createdAt: now,
+        })
+        ev.messageId = id
+        this.waiters.notify(other)
+      }
+      const ended = {
+        ...thread,
+        status: 'ended' as const,
+        endedBy: ctx.agent,
+        endNote: input.note ?? null,
+        endedAt: now,
+        lastActivityAt: now,
+      }
+      this.store.updateThread(ended)
+      ev.threadId = thread.id
+      return { thread: this.toThreadView(ended) }
+    })
+  }
+
+  threads(ctx: CallCtx, input: ThreadsInput): Promise<ThreadsOutput> {
+    return this.op('threads', ctx.surface, ctx.agent, () => {
+      const all = this.store.listThreadsFor(ctx.agent).map((t) => this.toThreadView(t))
+      const filtered = input.status === 'all' ? all : all.filter((t) => t.status === input.status)
+      return { threads: filtered }
+    })
+  }
+
+  history(ctx: CallCtx, input: HistoryInput): Promise<HistoryOutput> {
+    return this.op('history', ctx.surface, ctx.agent, (ev) => {
+      const thread = this.requireParticipant(input.threadId, ctx.agent)
+      ev.threadId = thread.id
+      return {
+        messages: this.store
+          .listMessages(thread.id, input.afterId, input.limit)
+          .map((m) => this.toMessageView(m)),
+      }
     })
   }
 
