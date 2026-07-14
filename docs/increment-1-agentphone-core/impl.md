@@ -94,6 +94,25 @@ scale — revisit if event volume grows); `ClientError` reused for CLI-local res
 - Deferred (below): M4 parked waiter not released on client disconnect; M6 unused 'admin' surface
   value.
 
+### README cold-test + critique (2026-07-14, subagent pair on the overhauled README)
+
+- Critic: SHIP_AFTER_EDITS; accuracy audit fully clean (every command/flag/default/exit code
+  verified against source). Applied: agent-side install bridge (clone + build + `npm link` — the
+  bare `agentphone` command was unrunnable cold), MCP-vs-CLI decision paragraph with ack
+  conveniences, scannable ring exit-code block, `threads` in the cheatsheet, canonical
+  `claude mcp add` argument order, shell-dialect note.
+- Cold executor: COMPLETED_JOURNEY but initial verdict "a fresh agent could not get going" —
+  confirmed the install-bridge blocker, and caught a genuine behavior/docs contradiction:
+  **`send --to` only resolved OPEN threads, dead-ending the documented "late reply reopens"
+  path after hangup.** Fixed behaviorally (TDD): `resolvePeerThread` now falls back to the most
+  recent ended thread with the peer when none is open (server-side reopen-on-send then applies);
+  design.md sugar wording updated. Also fixed: PowerShell-5.1-safe server block (`;` not `&&`),
+  distinct peer names + "calls need a peer" note, register output no longer prints a cmd.exe-style
+  `set` hint, admin-shares-the-server-DB note, hangup `--note` → [system] message documented.
+- Verified in the cold run: full cheatsheet, ring exit codes 0 and 2 live, at-least-once
+  redelivery, listening flag semantics, jsonl events, MCP endpoint auth (200 with bearer, 401
+  without).
+
 ## Deferred debt
 
 - `JsonlEmitter` synchronous append on the request path — acceptable now, swap to buffered/async

@@ -143,7 +143,9 @@ agentphone phonebook
 agentphone call <agent> --subject "..." [-m "..."]
 agentphone send --thread <id> -m "..."
 agentphone send --to <agent> -m "..."    # sugar: resolves your single open thread with that
-                                         # peer; errors listing candidates if ambiguous
+                                         # peer, or your most recent ended one if none is open
+                                         # (reopen-on-send); errors listing candidates when
+                                         # multiple are open
 agentphone listen [--wait 3600] [--ack]  # THE RING: loops ≤60s long-polls internally,
                                          # exits when messages arrive (background this)
 agentphone inbox
