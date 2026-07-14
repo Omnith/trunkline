@@ -65,7 +65,10 @@ export function buildApp(deps: AppDeps): express.Express {
     (surface: Surface): RequestHandler =>
     (req, res, next) => {
       const header = req.header('authorization')
-      const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined
+      const token =
+        header !== undefined && header.slice(0, 7).toLowerCase() === 'bearer '
+          ? header.slice(7)
+          : undefined
       res.locals.agent = service.authenticate(token, surface).name
       res.locals.surface = surface
       next()
@@ -189,6 +192,11 @@ export function buildApp(deps: AppDeps): express.Express {
   )
 
   app.use('/api', api)
+
+  // uniform JSON 404 for anything unmatched (no canonical event for unrouted requests)
+  app.use((_req, res) => {
+    res.status(404).json({ error: { code: 'NOT_FOUND', message: 'no such route' } })
+  })
 
   // single error shape for every failure mode; boundary failures emit the canonical event here
   // (PhoneErrors were already emitted inside the service's op() wrapper - no double emit)

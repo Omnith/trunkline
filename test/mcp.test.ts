@@ -74,8 +74,11 @@ describe('mcp surface', () => {
       ].sort(),
     )
     const listen = tools.find((t) => t.name === 'listen')
-    // assert the default via the published schema rather than a live 25s call
-    expect(JSON.stringify(listen?.inputSchema)).toContain('25000')
+    // assert the 25s default is published at its precise JSON-schema location
+    const waitMsSchema = (
+      listen?.inputSchema as { properties?: Record<string, { default?: unknown }> }
+    )?.properties?.waitMs
+    expect(waitMsSchema?.default).toBe(25000)
     await client.close()
   })
 

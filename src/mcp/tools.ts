@@ -2,6 +2,22 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Request, Response } from 'express'
 import { z } from 'zod'
+import {
+  AckInputSchema,
+  CallInputSchema,
+  CheckinInputSchema,
+  HangupInputSchema,
+  HistoryInputSchema,
+  SendInputSchema,
+  ThreadsInputSchema,
+  type AckInput,
+  type CallInput,
+  type CheckinInput,
+  type HangupInput,
+  type HistoryInput,
+  type SendInput,
+  type ThreadsInput,
+} from '../core/contracts.js'
 import { PhoneError } from '../core/errors.js'
 import type { CallCtx, PhoneService } from '../core/service.js'
 
@@ -35,9 +51,9 @@ export function buildMcpServer(service: PhoneService, agent: string): McpServer 
     'checkin',
     {
       description: 'Update your phonebook status text.',
-      inputSchema: { status: z.string().max(200).optional() },
+      inputSchema: CheckinInputSchema.shape,
     },
-    wrap((a: { status?: string }) => service.checkin(ctx, a)),
+    wrap((a: CheckinInput) => service.checkin(ctx, a)),
   )
   server.registerTool(
     'phonebook',
@@ -51,37 +67,24 @@ export function buildMcpServer(service: PhoneService, agent: string): McpServer 
     'call',
     {
       description: 'Open a call (thread) with another agent, optionally sending a first message.',
-      inputSchema: {
-        to: z.string(),
-        subject: z.string().min(1).max(200),
-        body: z
-          .string()
-          .min(1)
-          .max(64 * 1024)
-          .optional(),
-      },
+      inputSchema: CallInputSchema.shape,
     },
-    wrap((a: { to: string; subject: string; body?: string }) => service.call(ctx, a)),
+    wrap((a: CallInput) => service.call(ctx, a)),
   )
   server.registerTool(
     'send',
     {
       description: 'Send a message into an existing thread (reopens an ended thread).',
-      inputSchema: {
-        threadId: z.number().int(),
-        body: z
-          .string()
-          .min(1)
-          .max(64 * 1024),
-      },
+      inputSchema: SendInputSchema.shape,
     },
-    wrap((a: { threadId: number; body: string }) => service.send(ctx, a)),
+    wrap((a: SendInput) => service.send(ctx, a)),
   )
   server.registerTool(
     'listen',
     {
       description:
         'Long-poll for unacked messages; returns immediately if any exist. Max waitMs 60000. For a background "ring" while you work, use the agentphone CLI: run `agentphone listen --wait 3600` as a background task.',
+      // MCP-specific default: 25s poll window (vs. the core 0-wait "peek" default)
       inputSchema: { waitMs: z.number().int().min(0).max(60_000).default(25_000) },
     },
     wrap((a: { waitMs: number }) => service.listen(ctx, a)),
@@ -98,37 +101,33 @@ export function buildMcpServer(service: PhoneService, agent: string): McpServer 
     'ack',
     {
       description: 'Acknowledge delivery through a message id (advances your cursor).',
-      inputSchema: { throughMessageId: z.number().int().min(0) },
+      inputSchema: AckInputSchema.shape,
     },
-    wrap((a: { throughMessageId: number }) => service.ack(ctx, a)),
+    wrap((a: AckInput) => service.ack(ctx, a)),
   )
   server.registerTool(
     'history',
     {
       description: 'Read messages in a thread you participate in.',
-      inputSchema: {
-        threadId: z.number().int(),
-        afterId: z.number().int().default(0),
-        limit: z.number().int().min(1).max(500).default(100),
-      },
+      inputSchema: HistoryInputSchema.shape,
     },
-    wrap((a: { threadId: number; afterId: number; limit: number }) => service.history(ctx, a)),
+    wrap((a: HistoryInput) => service.history(ctx, a)),
   )
   server.registerTool(
     'threads',
     {
       description: 'List your calls (threads), filtered by open/ended/all.',
-      inputSchema: { status: z.enum(['open', 'ended', 'all']).default('open') },
+      inputSchema: ThreadsInputSchema.shape,
     },
-    wrap((a: { status: 'open' | 'ended' | 'all' }) => service.threads(ctx, a)),
+    wrap((a: ThreadsInput) => service.threads(ctx, a)),
   )
   server.registerTool(
     'hangup',
     {
       description: 'End a call, optionally leaving a closing note (delivered as a system message).',
-      inputSchema: { threadId: z.number().int(), note: z.string().max(2000).optional() },
+      inputSchema: HangupInputSchema.shape,
     },
-    wrap((a: { threadId: number; note?: string }) => service.hangup(ctx, a)),
+    wrap((a: HangupInput) => service.hangup(ctx, a)),
   )
 
   return server

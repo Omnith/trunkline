@@ -32,6 +32,27 @@ describe('http surface', () => {
     expect(await asJson(bad)).toMatchObject({ error: { code: 'UNAUTHORIZED' } })
   })
 
+  test('the bearer scheme is matched case-insensitively', async () => {
+    const h = makeService()
+    const token = provision(h, 'volumi')
+    const base = await boot(h)
+    const res = await fetch(`${base}/api/agents`, {
+      headers: { authorization: `bearer ${token}` },
+    })
+    expect(res.status).toBe(200)
+  })
+
+  test('an unmatched route returns a JSON 404 with the standard error shape', async () => {
+    const h = makeService()
+    const token = provision(h, 'volumi')
+    const base = await boot(h)
+    const res = await fetch(`${base}/api/bogus`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(res.status).toBe(404)
+    expect(await asJson(res)).toMatchObject({ error: { code: 'NOT_FOUND' } })
+  })
+
   test('register over http mints a token that then authenticates', async () => {
     const h = makeService()
     const code = invite(h)

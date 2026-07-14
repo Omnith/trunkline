@@ -63,6 +63,24 @@ scale — revisit if event volume grows); `ClientError` reused for CLI-local res
   reproduced (a forced eslint failure propagated exit 2). Direct-command verification retained as
   practice regardless.
 
+### Phase 2-3 checkpoint (2026-07-14, parallel spec-conformance + code-quality reviewers, commits 599535c..a29f489)
+
+- Spec-conformance: ✅ compliant, no findings. All 11 HTTP routes match the design table; the
+  one-event-per-request contract traced across success/validation/auth paths; http→mcp handler
+  injection verified (composition root is the sole mcp importer); the single sanctioned test
+  deviation (type-only `textOf` param via the SDK's `callTool` return type) changed no assertions.
+- Code-quality: APPROVE, tests judged free of implementation coupling. One Important + five Minor:
+  - **Fixed (fix commit after a29f489):** I1 MCP tool schemas now reuse the core zod contracts
+    (`*InputSchema.shape`) instead of inline re-declarations — closes the agent-name validation
+    divergence between surfaces (`listen` keeps its deliberate MCP-specific 25s default); M1
+    case-insensitive Bearer scheme; M2 `startServer` rejects on bind errors (EADDRINUSE previously
+    hung the promise); M4 uniform JSON 404 catch-all for unmatched routes; M6 listen-default
+    assertion pins the published schema default instead of a substring match.
+  - **Accepted as-is:** M3 boundary events for pre-route failures (413) carry `op: req.path`
+    rather than a verb label — graceful degradation, noted for anyone querying events by `op`;
+    M5 `McpHandler` carries `service` although the composition root could close over it — seam
+    judged non-leaky; revisit if a third surface appears.
+
 ## Deferred debt
 
 - `JsonlEmitter` synchronous append on the request path — acceptable now, swap to buffered/async

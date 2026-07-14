@@ -18,7 +18,7 @@ export function startServer(cfg: ServerConfig): Promise<RunningServer> {
   const emitter = new JsonlEmitter(cfg.eventsPath)
   const service = new PhoneService(store, emitter, systemClock, cfg.threadTtlHours * HOUR_MS)
   const app = buildApp({ service, emitter, clock: systemClock, mcpHandler: handleMcpRequest })
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const srv = app.listen(cfg.port, cfg.bind, () => {
       const port = (srv.address() as AddressInfo).port
       resolve({
@@ -32,5 +32,7 @@ export function startServer(cfg: ServerConfig): Promise<RunningServer> {
           }),
       })
     })
+    // bind failures (e.g. EADDRINUSE) fire 'error', never the listen callback
+    srv.once('error', reject)
   })
 }
