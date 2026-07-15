@@ -34,7 +34,7 @@ export function loadServerConfig(env: Env): ServerConfig {
 
 export function loadClientConfig(env: Env): ClientConfig {
   const url = env.AGENTPHONE_URL
-  if (!url) throw new Error('AGENTPHONE_URL is required (e.g. http://100.110.150.142:4747)')
+  if (!url) throw new Error('AGENTPHONE_URL is required (e.g. http://<server-ip>:4747)')
   const token = env.AGENTPHONE_TOKEN
   if (!token) throw new Error('AGENTPHONE_TOKEN is required (mint one via invite or admin add)')
   return { url, token }
