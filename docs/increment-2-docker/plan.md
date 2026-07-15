@@ -51,15 +51,28 @@ npm view pnpm@10 version --json | Select-Object -Last 2
 
 Take the highest listed version (call it `10.X.Y` below — substitute the real value everywhere).
 
-- [ ] **Step 3: Pin it in `package.json`**
+- [ ] **Step 3: Pin it in `package.json` AND allowlist native build scripts**
 
 Add to the top-level object (after `"type": "module",`):
 
 ```json
   "packageManager": "pnpm@10.X.Y",
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
+  },
 ```
 
-- [ ] **Step 4: Enable corepack and install**
+CRITICAL: pnpm 10 blocks dependency lifecycle scripts by default. Without `onlyBuiltDependencies`,
+better-sqlite3's install script (which fetches its native `.node` binding) is silently skipped —
+`pnpm install` exits 0 with an "Ignored build scripts" warning and every test then fails with
+"Could not locate the bindings file". esbuild (tsup's engine) is allowlisted for the same reason.
+
+- [ ] **Step 4: Update `.prettierignore` for the new lockfile**
+
+Replace the `package-lock.json` line with `pnpm-lock.yaml` (the generated lockfile is not
+prettier-formatted; without this, `pnpm run lint` fails at `prettier --check .`).
+
+- [ ] **Step 5: Enable corepack and install**
 
 ```powershell
 corepack enable
@@ -67,9 +80,9 @@ Remove-Item package-lock.json
 pnpm install
 ```
 
-Expected: `pnpm-lock.yaml` created; `node_modules` rebuilt in pnpm layout (a `node_modules/.pnpm` virtual store appears). If `corepack enable` fails with a permissions error on Windows, run `corepack enable --install-directory "$env:USERPROFILE\.corepack-bin"` and add that directory to PATH for the session, or fall back to invoking `corepack pnpm <cmd>` everywhere `pnpm <cmd>` appears.
+Expected: `pnpm-lock.yaml` created; `node_modules` rebuilt in pnpm layout (a `node_modules/.pnpm` virtual store appears); NO "Ignored build scripts" warning for better-sqlite3. If `corepack enable` fails with a permissions error on Windows, run `corepack enable --install-directory "$env:USERPROFILE\.corepack-bin"` and add that directory to PATH for the session, or fall back to invoking `corepack pnpm <cmd>` everywhere `pnpm <cmd>` appears.
 
-- [ ] **Step 5: Run ALL gates under pnpm (real exit codes)**
+- [ ] **Step 6: Run ALL gates under pnpm (real exit codes)**
 
 ```powershell
 pnpm run typecheck
@@ -78,13 +91,16 @@ pnpm test
 pnpm run build
 ```
 
-Expected: identical results to npm — typecheck/lint clean, **70 tests pass**, build emits `dist/agentphone.js`. pnpm's stricter `node_modules` can surface phantom-dependency imports; if any module fails to resolve, add it as an explicit dependency (report it — do not work around with hoisting config).
+Expected: identical results to npm — typecheck/lint clean, **70 tests pass**, build emits `dist/agentphone.js`.
+Troubleshooting: (a) "Could not locate the bindings file" for better-sqlite3 = its build script
+was blocked — confirm it's listed in `pnpm.onlyBuiltDependencies` (NOT a phantom-dep problem);
+(b) a module genuinely failing to RESOLVE = pnpm's stricter node_modules surfaced a phantom
+dependency — add it as an explicit dependency and report it.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```powershell
-git add package.json pnpm-lock.yaml
-git rm --cached package-lock.json 2>$null; git add -A
+git add -A
 git commit -m "chore: switch to pnpm with exact-pinned packageManager"
 ```
 
@@ -98,6 +114,9 @@ git commit -m "chore: switch to pnpm with exact-pinned packageManager"
 ```yaml
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
       - run: corepack enable
       - uses: actions/setup-node@v4
         with:
@@ -110,7 +129,10 @@ git commit -m "chore: switch to pnpm with exact-pinned packageManager"
       - run: pnpm test
 ```
 
-(`corepack enable` must run BEFORE `actions/setup-node` — the `cache: pnpm` option invokes `pnpm store path` during setup.)
+(The double `setup-node` is deliberate and is the robust documented pattern: the first pins the
+Node version, `corepack enable` shims pnpm into THAT Node's bin dir, and the second run's
+`cache: pnpm` probe (`pnpm store path`) then finds pnpm reliably on all OSes. A single
+setup-node with corepack before it is known-flaky on Windows runners.)
 
 - [ ] **Step 2: Commit and push; verify the matrix live**
 
@@ -118,10 +140,21 @@ git commit -m "chore: switch to pnpm with exact-pinned packageManager"
 git add .github/workflows/ci.yml
 git commit -m "ci: run the gate matrix under pnpm"
 git push -u origin feat/ffl-2-docker
-gh run watch --exit-status (gh run list --branch feat/ffl-2-docker --limit 1 --json databaseId --jq '.[0].databaseId')
+$sha = git rev-parse HEAD
+$rid = $null
+for ($i = 0; $i -lt 10 -and -not $rid; $i++) {
+  Start-Sleep -Seconds 5
+  $rid = gh run list --branch feat/ffl-2-docker --json databaseId,headSha --jq "map(select(.headSha==`"$sha`"))[0].databaseId"
+}
+gh run watch $rid --exit-status
 ```
 
-Expected: all four legs (windows/macos × node 22/24) green under pnpm. Do not proceed until green.
+(Resolve the run by the pushed commit's SHA — `--limit 1` right after a push races the run
+registration and can watch a stale run or error on an empty id.)
+
+Expected: all four legs (windows/macos × node 22/24) green under pnpm. Do not proceed until
+green. On a red leg: `gh run view $rid --log-failed`; the two likeliest causes are a blocked
+better-sqlite3 build script (see Task 1 Step 3) or an OS-specific phantom-dependency resolution.
 
 ### Task 3: Dockerfile, .dockerignore, compose
 
@@ -138,7 +171,9 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm fetch
 COPY . .
-RUN pnpm install --frozen-lockfile --offline \
+# note: not hermetic - better-sqlite3's install script downloads its linux prebuilt
+# from GitHub Releases at install time (slim has no compiler fallback by design)
+RUN pnpm install --frozen-lockfile \
  && pnpm run build \
  && pnpm prune --prod
 
@@ -211,6 +246,7 @@ docker version
 If that fails (no local Docker), skip to Step 5 — the CI docker job (Task 4) is the authoritative smoke. Otherwise:
 
 ```powershell
+docker compose config -q      # validate compose syntax while we're here
 docker build -t agentphone:dev .
 docker volume create ap-dev
 docker run -d --name ap-dev -p 47473:4747 -v ap-dev:/data agentphone:dev
@@ -267,6 +303,9 @@ git commit -m "feat(docker): add slim multi-stage image with container-first def
           out=$(docker run --rm -v ap-smoke:/data agentphone:smoke admin invite --name ci-smoke)
           echo "$out"
           echo "$out" | grep -q "ap-invite-" || exit 1
+          out2=$(docker exec ap node dist/agentphone.js admin invite --name ci-smoke-exec)
+          echo "$out2"
+          echo "$out2" | grep -q "ap-invite-" || exit 1
           docker rm -f ap
       - name: Log in to GHCR
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -341,9 +380,12 @@ node dist/agentphone.js serve            # listens on :4747
 ```
 ````
 
-- [ ] **Step 2: Update the Provisioning section's command context**
+- [ ] **Step 2: Restate the invite/list/revoke block inside the new section**
 
-Keep the existing invite/list/revoke lines but present both forms:
+NOTE ON BOUNDARIES: there is no section literally named "Provisioning" — the invite/list/revoke
+lines live inside "Server — once, on one machine" today, so Step 1's replacement REMOVES them.
+This step adds them back, both forms, at the END of the new Docker-first section (after the
+from-source block):
 
 ````markdown
 Mint a single-use invite for each agent that should be allowed in:
@@ -352,10 +394,13 @@ Mint a single-use invite for each agent that should be allowed in:
 # docker:       docker exec agentphone node dist/agentphone.js admin invite --name volumi
 # from source:  node dist/agentphone.js admin invite --name volumi
 ```
-````
 
-(Keep the existing `admin list` / `admin revoke` / same-`AGENTPHONE_DB` paragraph as is — for
-docker, the shared volume satisfies the same-DB requirement automatically.)
+`admin list` / `admin revoke <name>` manage the phonebook. Provisioning is deliberately
+local-only — there is no remote admin surface. From source, run `admin` with the same
+`AGENTPHONE_DB` as the server (it edits the database directly); in docker, the shared
+volume satisfies that automatically. Prefer the named volume shown above — a host
+bind-mount to `/data` must be pre-owned by uid 1000 or the non-root server can't write it.
+````
 
 - [ ] **Step 3: Switch the agent install block to pnpm**
 
@@ -398,18 +443,44 @@ pnpm test
 pnpm run build
 ```
 
-- [ ] **Step 3: Commit, push, PR**
+- [ ] **Step 3: Final holistic review (scaled for a zero-src increment)**
+
+Per CLAUDE.md increment workflow step 6 / implementation process step 4: dispatch one review
+subagent over the whole increment diff (base = main) checking: Dockerfile correctness vs the
+design (incl. the reviewed pnpm 10 script-allowlist and non-hermetic-install notes), CI job
+conditional logic (push gating, smoke coverage incl. the exec path), README accuracy against
+the implemented commands, and docs coherence (design/plan/impl consistency, deviations
+recorded). Fix HIGH/MEDIUM findings before the PR.
+
+- [ ] **Step 4: Commit, push, PR**
 
 ```powershell
 git add docs/increment-2-docker/impl.md
 git commit -m "docs: record increment-2 verification evidence"
 git push origin feat/ffl-2-docker
-gh pr create --base main --title "feat: multiarch docker image + pnpm (increment 2)" --body "..."
 ```
 
-(PR body: summary of the two deliverables + evidence; end with the Claude Code footer per harness convention.)
+Then create the PR with a real body (PowerShell here-string; closing `'@` at column 0):
 
-- [ ] **Step 4: Wait for PR CI (matrix + docker smoke) green, then merge**
+```powershell
+gh pr create --base main --title "feat: multiarch docker image + pnpm (increment 2)" --body @'
+## What
+
+Repo-wide pnpm (exact-pinned, corepack) and a lightweight multiarch (amd64+arm64) Docker
+image of the server, published to ghcr.io/omnith/agentphone on main pushes, smoke-gated
+(health + admin invite via one-shot AND exec) before any push.
+
+## Evidence
+
+- All gates green under pnpm locally and on the windows/macos x node 22/24 matrix.
+- CI docker job: amd64 build + smoke green on this branch (push steps skipped off-main).
+- Review trail in docs/increment-2-docker/impl.md.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+'@
+```
+
+- [ ] **Step 5: Wait for PR CI (matrix + docker smoke) green, then merge**
 
 ```powershell
 gh pr checks <n> --watch --interval 30
@@ -417,21 +488,52 @@ gh pr merge <n> --merge --delete-branch
 git checkout main; git pull
 ```
 
-- [ ] **Step 5: Verify the publish on main**
+- [ ] **Step 6: Verify the publish on main + make the package public**
 
-The merge push to main triggers the docker job WITH push. Watch it, then confirm the package:
+The merge push to main triggers the docker job WITH push. Watch it (resolve the run id by
+`headSha` as in Task 2), then confirm the package exists:
 
 ```powershell
-gh run watch --exit-status (gh run list --branch main --limit 1 --json databaseId --jq '.[0].databaseId')
 gh api "orgs/Omnith/packages/container/agentphone/versions" --jq '.[0].metadata.container.tags'
 ```
 
-Expected: run green including the multiarch push; package versions show `latest` and `sha-*` tags. Record in impl.md (small docs commit to main). Manual acceptance (user-side, not in this plan): `docker compose up -d` on the Windows box + register from the MacBook.
+Expected: `latest` and `sha-*` tags. (If the org is actually a user account, the path is
+`users/Omnith/...` instead.)
+
+**One-time visibility step (required for the README's anonymous `docker pull` to work):** a
+freshly created GHCR package is PRIVATE by default. An org owner must set
+GitHub → Omnith → Packages → agentphone → Package settings → Change visibility → Public
+(and confirm the package is linked to the repo). This is a browser step — ask the user to
+flip it, then verify anonymous access:
+
+```powershell
+docker logout ghcr.io
+docker pull ghcr.io/omnith/agentphone:latest
+```
+
+- [ ] **Step 7: Pull-and-run the PUBLISHED image (closes acceptance criteria 2/3 for amd64)**
+
+```powershell
+docker volume create ap-pub
+docker run -d --name ap-pub -p 47474:4747 -v ap-pub:/data ghcr.io/omnith/agentphone:latest
+Start-Sleep -Seconds 8
+Invoke-WebRequest http://127.0.0.1:47474/api/health -UseBasicParsing | Select-Object -ExpandProperty StatusCode  # expect 200
+docker exec ap-pub node dist/agentphone.js admin invite --name pub-smoke                                          # expect ap-invite-...
+docker run --rm -v ap-pub:/data ghcr.io/omnith/agentphone:latest admin invite --name pub-smoke2                   # expect ap-invite-...
+docker rm -f ap-pub; docker volume rm ap-pub
+```
+
+(If Docker is unavailable on this machine, this becomes the first step of the user's manual
+acceptance instead — state that explicitly in impl.md.) arm64 healthy-run is confirmed during
+manual acceptance on the MacBook — record that as a pending item in impl.md. Record all
+outcomes in impl.md (small docs commit to main). Manual acceptance (user-side, not in this
+plan): `docker compose up -d` on the Windows box + register from the MacBook.
 
 ---
 
-## Plan self-review (completed by plan author)
+## Plan self-review (completed by plan author, rev 2)
 
-1. **Spec coverage:** pnpm switch → T1/T2/T5; Dockerfile+ignore+compose → T3; smoke-gated GHCR publish → T4; README → T5; acceptance criteria 1-5 map to T1-T2 (gates under pnpm), T4/T6 (publish + gating), T3/T4 (healthy container + invite via exec/one-shot), T5 (docs). Design's error-handling notes need no tasks (increment-1 behavior).
-2. **Placeholder scan:** the PR body "..." in T6 is intentionally summarized (content specified in prose beside it); all file contents are complete.
-3. **Consistency:** image name lowercase everywhere; smoke port 47472 (CI) vs 47473 (local) don't collide with 4747; `pnpm@10.X.Y` placeholder is explicitly resolved in T1 Step 2 and must be substituted everywhere it appears (T1 Step 3 only).
+1. **Spec coverage:** pnpm switch → T1/T2/T5; Dockerfile+ignore+compose → T3; smoke-gated GHCR publish (incl. exec-path invite) → T4; README → T5; published-image verification + GHCR visibility → T6. All five acceptance criteria now have closing verification (AC2/AC3 amd64 closed by T6 Step 7; arm64 explicitly deferred to MacBook manual acceptance and recorded).
+2. **Placeholder scan:** PR body is now a complete here-string; `10.X.Y` is explicitly resolved in T1 Step 2 and substituted only in T1 Step 3.
+3. **Consistency:** image name lowercase everywhere; ports 4747 / 47472 (CI) / 47473 (local dev) / 47474 (published smoke) don't collide.
+4. **Review-gate traceability (rev 2):** both plan reviewers' HIGHs fixed (pnpm 10 `onlyBuiltDependencies` allowlist + corrected troubleshooting; `.prettierignore` lockfile swap); MEDIUMs fixed (robust double setup-node CI bootstrap; GHCR visibility step; bind-mount ownership note; `--offline` dropped with non-hermetic comment; headSha-based run watching with red-leg guidance; README step boundaries; real PR body + holistic review step; published-image pull/run incl. exec invite). LOWs folded (compose config validation, `git rm --cached` dropped) or noted for impl.md (chown /data-only deviation, busy_timeout, double-trigger cost, arm64 smoke tradeoff).
