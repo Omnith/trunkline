@@ -74,7 +74,8 @@ export function buildMcpServer(service: PhoneService, agent: string): McpServer 
   server.registerTool(
     'send',
     {
-      description: 'Send a message into an existing thread (reopens an ended thread).',
+      description:
+        'Send a message into an existing thread (reopens an ended thread). Pass ackThrough to also ack your inbox through that id — reply+ack in one call.',
       inputSchema: SendInputSchema.shape,
     },
     wrap((a: SendInput) => service.send(ctx, a)),

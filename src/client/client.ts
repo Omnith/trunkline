@@ -84,6 +84,7 @@ export class PhoneClient {
   send(input: SendInput): Promise<SendOutput> {
     return this.req('POST', `/api/calls/${input.threadId}/messages`, SendOutputSchema, {
       body: input.body,
+      ackThrough: input.ackThrough,
     })
   }
   inbox(waitMs = 0): Promise<ListenOutput> {

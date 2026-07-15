@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import type { ListenOutput, MessageView, ThreadView } from '../core/contracts.js'
+import type { ListenOutput, MessageView, SendInput, ThreadView } from '../core/contracts.js'
 import {
   ackAll,
   bodyFrom,
@@ -144,6 +144,19 @@ describe('sendTo', () => {
     const out = await sendTo(client, 'volumi', 'hello there')
     expect(sent).toEqual([{ threadId: 4, body: 'hello there' }])
     expect(out.message.id).toBe(9)
+  })
+
+  test('forwards ackThrough to send when given (reply+ack in one round)', async () => {
+    const sent: SendInput[] = []
+    const client: SendToClient = {
+      threads: () => Promise.resolve({ threads: [threadView(4, 'ci', 'open')] }),
+      send: (input) => {
+        sent.push(input)
+        return Promise.resolve({ message: msg(9, input.body) })
+      },
+    }
+    await sendTo(client, 'volumi', 'hi', 7)
+    expect(sent).toEqual([{ threadId: 4, body: 'hi', ackThrough: 7 }])
   })
 
   test('propagates resolution errors (no thread at all)', async () => {

@@ -46,6 +46,23 @@ describe('PhoneClient', () => {
     expect(history.messages.map((m) => m.kind)).toEqual(['message', 'message', 'system'])
   })
 
+  test('send forwards ackThrough so the sender inbox clears in one round', async () => {
+    const h = makeService()
+    const url = await boot(h)
+    const gha = await registerAgent(url, { name: 'gha-docker-runner', inviteCode: invite(h) })
+    const vol = await registerAgent(url, { name: 'volumi', inviteCode: invite(h) })
+    const ghaClient = new PhoneClient({ url, token: gha.token })
+    const volClient = new PhoneClient({ url, token: vol.token })
+
+    const { thread } = await ghaClient.call({ to: 'volumi', subject: 'ci', body: 'first' })
+    const got = await volClient.inbox()
+    expect(got.messages.length).toBeGreaterThan(0)
+
+    await volClient.send({ threadId: thread.id, body: 'reply', ackThrough: got.cursor })
+    const after = await volClient.inbox()
+    expect(after.messages).toEqual([]) // fails while PhoneClient drops ackThrough
+  })
+
   test('domain errors surface as ClientError with the server code', async () => {
     const h = makeService()
     const url = await boot(h)
