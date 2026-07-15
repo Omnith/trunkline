@@ -1,15 +1,16 @@
 services:
-  agentphone:
-    image: ghcr.io/omnith/agentphone:latest
+  trunkline:
+    image: ghcr.io/omnith/trunkline:latest
     # registry image is private: `docker compose up -d --build` builds from this
     # clone instead (and tags it under the image name above)
     build: .
-    container_name: agentphone
+    container_name: trunkline
     ports:
       - '4747:4747'
     volumes:
-      - agentphone-data:/data
+      - trunkline-data:/data
     restart: unless-stopped
 
 volumes:
-  agentphone-data:
+  trunkline-data:
+    name: trunkline-data

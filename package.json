@@ -1,5 +1,5 @@
 {
-  "name": "agentphone",
+  "name": "trunkline",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,7 +14,7 @@
     "node": ">=22"
   },
   "bin": {
-    "agentphone": "dist/agentphone.js"
+    "trunkline": "dist/trunkline.js"
   },
   "scripts": {
     "build": "tsup",
