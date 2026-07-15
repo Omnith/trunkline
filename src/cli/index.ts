@@ -171,6 +171,15 @@ program.command('serve').action(async () => {
   const cfg = loadServerConfig(process.env)
   const running = await startServer(cfg)
   out(`agentphone listening on ${cfg.bind}:${running.port} (db: ${cfg.dbPath})`)
+  // close() is idempotent via its closing-guard, so SIGTERM+SIGINT double-delivery is safe
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+    process.once(sig, () => {
+      running.close().then(
+        () => process.exit(0),
+        () => process.exit(1), // a swallowed rejection would hang to SIGKILL
+      )
+    })
+  }
 })
 
 const admin = program.command('admin').description('server-host provisioning (direct db access)')

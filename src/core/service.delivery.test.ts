@@ -123,6 +123,17 @@ describe('listen long-poll', () => {
   })
 })
 
+describe('graceful shutdown', () => {
+  test('releaseWaiters resolves an in-flight listen empty instead of re-parking', async () => {
+    const h = twoAgents()
+    const parked = h.service.listen(gha, { waitMs: 60_000 })
+    await new Promise((r) => setTimeout(r, 20)) // let it park
+    h.service.releaseWaiters()
+    const res = await parked // must resolve now, not after 60s
+    expect(res.messages).toEqual([])
+  })
+})
+
 describe('canonical events', () => {
   test('every operation emits exactly one event, including failures', async () => {
     const h = twoAgents()

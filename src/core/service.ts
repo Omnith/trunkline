@@ -122,6 +122,11 @@ export class PhoneService {
     return this.waiters.isListening(agent)
   }
 
+  // shutdown: release parked long-polls so an in-flight listen resolves empty instead of re-parking
+  releaseWaiters(): void {
+    this.waiters.releaseAll()
+  }
+
   // --- identity ---
   register(input: RegisterInput, surface: Surface): Promise<RegisterOutput> {
     return this.op('register', surface, input.name, () => {
@@ -266,7 +271,7 @@ export class PhoneService {
         const cursor = this.store.getCursor(ctx.agent)
         const records = this.store.listUnacked(ctx.agent, cursor, DELIVERY_BATCH_LIMIT)
         const elapsed = Date.now() - startedAt
-        if (records.length > 0 || elapsed >= input.waitMs) {
+        if (records.length > 0 || elapsed >= input.waitMs || this.waiters.isDraining()) {
           ev.deliveredCount = records.length
           ev.waitedMs = elapsed
           const last = records[records.length - 1]
