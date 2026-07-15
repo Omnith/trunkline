@@ -81,7 +81,7 @@ describe('history', () => {
 
 describe('JsonlEmitter', () => {
   test('writes one JSON line per event', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'agentphone-'))
+    const dir = mkdtempSync(join(tmpdir(), 'trunkline-'))
     const path = join(dir, 'events.jsonl')
     const emitter = new JsonlEmitter(path)
     const event: PhoneEvent = {

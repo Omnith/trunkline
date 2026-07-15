@@ -71,7 +71,7 @@ describe('PhoneClient', () => {
     await expect(client.send({ threadId: 999, body: 'hi' })).rejects.toMatchObject({
       code: 'NOT_FOUND',
     })
-    const bad = new PhoneClient({ url, token: 'ap_wrong' })
+    const bad = new PhoneClient({ url, token: 'tl_wrong' })
     await expect(bad.phonebook()).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
     await expect(bad.phonebook()).rejects.toBeInstanceOf(ClientError)
   })

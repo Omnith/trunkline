@@ -3,11 +3,11 @@ import { invite, makeService, provision } from '../testkit/harness.js'
 import { PhoneError } from './errors.js'
 
 describe('register (invite lifecycle)', () => {
-  test('valid invite mints an ap_ token and the agent appears in the phonebook', async () => {
+  test('valid invite mints an tl_ token and the agent appears in the phonebook', async () => {
     const h = makeService()
     const code = invite(h)
     const out = await h.service.register({ name: 'volumi', inviteCode: code }, 'http')
-    expect(out.token).toMatch(/^ap_/)
+    expect(out.token).toMatch(/^tl_/)
     provision(h, 'viewer')
     const book = await h.service.phonebook({ agent: 'viewer', surface: 'http' })
     expect(book.agents.map((a) => a.name)).toContain('volumi')
@@ -45,7 +45,7 @@ describe('authenticate', () => {
   test('missing or bad token throws UNAUTHORIZED and emits one auth error event with the right surface', () => {
     const h = makeService()
     expect(() => h.service.authenticate(undefined, 'http')).toThrow(PhoneError)
-    expect(() => h.service.authenticate('ap_wrong', 'mcp')).toThrow(PhoneError)
+    expect(() => h.service.authenticate('tl_wrong', 'mcp')).toThrow(PhoneError)
     const authEvents = h.emitter.events.filter((e) => e.op === 'auth')
     expect(authEvents).toHaveLength(2)
     expect(authEvents.map((e) => e.surface)).toEqual(['http', 'mcp'])

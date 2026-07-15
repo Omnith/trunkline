@@ -7,7 +7,7 @@ describe('provisioning', () => {
     const h = makeService()
     const { code } = createInvite(h.store, h.clock, {})
     const out = await h.service.register({ name: 'volumi', inviteCode: code }, 'http')
-    expect(out.token).toMatch(/^ap_/)
+    expect(out.token).toMatch(/^tl_/)
     await expect(
       h.service.register({ name: 'other', inviteCode: code }, 'http'),
     ).rejects.toMatchObject({

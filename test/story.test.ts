@@ -11,7 +11,7 @@ import { SqliteStore } from '../src/store/sqlite.js'
 
 describe('the whole story', () => {
   test('register, call, listen-wake, voicemail, ack, hangup, restart persistence, 401', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'agentphone-story-'))
+    const dir = mkdtempSync(join(tmpdir(), 'trunkline-story-'))
     const cfg: ServerConfig = {
       port: 0,
       bind: '127.0.0.1',
@@ -40,7 +40,7 @@ describe('the whole story', () => {
 
     // a wrong token is rejected on an authenticated route
     const badToken = await fetch(`${url}/api/agents`, {
-      headers: { authorization: 'Bearer ap_wrong' },
+      headers: { authorization: 'Bearer tl_wrong' },
     })
     expect(badToken.status).toBe(401)
 

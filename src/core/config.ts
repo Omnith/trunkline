@@ -24,18 +24,18 @@ function intFrom(env: Env, key: string, fallback: number): number {
 
 export function loadServerConfig(env: Env): ServerConfig {
   return {
-    port: intFrom(env, 'AGENTPHONE_PORT', 4747),
-    bind: env.AGENTPHONE_BIND ?? '127.0.0.1',
-    dbPath: env.AGENTPHONE_DB ?? './agentphone.db',
-    eventsPath: env.AGENTPHONE_EVENTS ?? './agentphone.events.jsonl',
-    threadTtlHours: intFrom(env, 'AGENTPHONE_THREAD_TTL_HOURS', 24),
+    port: intFrom(env, 'TRUNKLINE_PORT', 4747),
+    bind: env.TRUNKLINE_BIND ?? '127.0.0.1',
+    dbPath: env.TRUNKLINE_DB ?? './trunkline.db',
+    eventsPath: env.TRUNKLINE_EVENTS ?? './trunkline.events.jsonl',
+    threadTtlHours: intFrom(env, 'TRUNKLINE_THREAD_TTL_HOURS', 24),
   }
 }
 
 export function loadClientConfig(env: Env): ClientConfig {
-  const url = env.AGENTPHONE_URL
-  if (!url) throw new Error('AGENTPHONE_URL is required (e.g. http://<server-ip>:4747)')
-  const token = env.AGENTPHONE_TOKEN
-  if (!token) throw new Error('AGENTPHONE_TOKEN is required (mint one via invite or admin add)')
+  const url = env.TRUNKLINE_URL
+  if (!url) throw new Error('TRUNKLINE_URL is required (e.g. http://<server-ip>:4747)')
+  const token = env.TRUNKLINE_TOKEN
+  if (!token) throw new Error('TRUNKLINE_TOKEN is required (mint one via invite or admin add)')
   return { url, token }
 }
