@@ -66,6 +66,19 @@ correct for `docker stop`.
 - **AC5:** suite 76/76, no existing test modified.
 - Cleanup: bench-a/b/c/d revoked; phonebook back to desktop + volumi.
 
+## Final holistic review (2026-07-15, two parallel Opus reviewers over main..HEAD)
+
+Both MERGE-READY, zero HIGH/MEDIUM. All plan-gate fixes verified present in code (drain flag
+in the listen exit condition, client wire forwarding, idempotent close, reaper lifecycle,
+PhoneEvent.ackedThrough, no `as any`); lazy boundary verified at source AND built-artifact
+level; surfaces consistent; gates independently re-run. LOWs applied in `561a1ea` (all on the
+load-bearing shutdown path, per the tech-debt stance): try/finally so the close promise always
+settles even if store/emitter throw; 5s unref'd exit-fallback timer in the signal handler
+(hang → exit 1 before docker's grace SIGKILLs); one-way-latch comment on `Waiters.draining`;
+test assertion that double-close emits exactly one canonical `shutdown` event. LOWs accepted
+without change: CLI numeric-flag validation stays server-side (existing convention); the
+cursor-probe-via-ack test style noted as methodology-compliant.
+
 ## Deferred debt
 
 - Waiter release on **client disconnect** (mid-poll socket drop leaves a parked waiter until
