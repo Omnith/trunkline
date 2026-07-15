@@ -88,7 +88,12 @@ admin.command('add <name>').action(async (name: string) => {
 
 Run: `pnpm run build` then `pnpm run typecheck && pnpm run lint && pnpm test`
 Expected: all pass; `dist/` now contains `agentphone.js` plus at least one chunk file.
-Run: `node dist/agentphone.js --help` and eyeball it is subjectively instant; formal numbers in Task 5.
+Run: `head -1 dist/agentphone.js` — the `#!/usr/bin/env node` shebang must survive splitting
+(the `bin` entry depends on it; plan-review LOW-2).
+Run: `node dist/agentphone.js --help` (instant) and a manual smoke of the lazy paths —
+`node dist/agentphone.js admin list` with a temp `AGENTPHONE_DB`, and `serve` on an ephemeral
+port with ctrl-c — since no suite test exercises serve/admin; the guards here are typecheck +
+this smoke (plan-review L3). Formal numbers in Task 5.
 
 - [ ] **Step 4: commit**
 
@@ -97,13 +102,19 @@ git add tsup.config.ts src/cli/index.ts
 git commit -m "perf(cli): lazy-load server stack so client verbs skip express/mcp-sdk/sqlite"
 ```
 
-### Task 2: releaseAll + graceful shutdown (G2)
+### Task 2: drain-aware releaseAll + graceful shutdown (G2)
+
+**Plan-review rev 2:** `releaseAll` alone is NOT sufficient (arch HIGH-1): the listen loop in
+`src/core/service.ts:261-281` re-checks `records.length > 0 || elapsed >= waitMs` after every
+wakeup — a shutdown wake has no new message and elapsed ≪ waitMs, so the handler would simply
+**re-park**. The exit condition must also consult a draining flag. Do NOT weaken the tests if
+close hangs — the re-park is the bug.
 
 **Files:**
-- Modify: `src/core/waiters.ts`, `src/core/service.ts`, `src/http/server.ts`, `src/cli/index.ts` (serve action), `src/core/ports.ts` (event type, only if op unions/fields are typed there)
-- Test: `src/core/waiters.test.ts`, `src/http/server.test.ts`
+- Modify: `src/core/waiters.ts`, `src/core/service.ts` (listen exit condition + `releaseWaiters`), `src/http/server.ts`, `src/cli/index.ts` (serve action)
+- Test: `src/core/waiters.test.ts`, `src/core/service.delivery.test.ts`, `src/http/server.test.ts`
 
-- [ ] **Step 1: failing test — releaseAll wakes parked waiters**
+- [ ] **Step 1: failing tests — waiter release AND service-level drain**
 
 ```ts
 // src/core/waiters.test.ts (add)
@@ -118,22 +129,61 @@ it('releaseAll wakes every parked waiter and clears listening state', async () =
 })
 ```
 
-- [ ] **Step 2: run it — fails** (`releaseAll is not a function`)
+```ts
+// src/core/service.delivery.test.ts (add — this is the test that encodes HIGH-1;
+// use this file's real fixtures: twoAgents() harness h, ctxs gha/vol)
+it('releaseWaiters resolves an in-flight listen empty instead of re-parking', async () => {
+  const h = twoAgents()
+  const parked = h.service.listen(gha, { waitMs: 60_000 })
+  await new Promise((r) => setTimeout(r, 20)) // let it park
+  h.service.releaseWaiters()
+  const res = await parked // must resolve now, not after 60s
+  expect(res.messages).toEqual([])
+})
+```
 
-- [ ] **Step 3: implement**
+- [ ] **Step 2: run both — fail** (`releaseAll`/`releaseWaiters` not a function; second test
+  would time out even with a bare notify-based releaseAll — that is the point)
+
+- [ ] **Step 3: implement drain-aware release**
 
 ```ts
-// src/core/waiters.ts (add method)
+// src/core/waiters.ts (add)
+private draining = false
+
+isDraining(): boolean {
+  return this.draining
+}
+
 releaseAll(): void {
+  this.draining = true
   for (const agent of [...this.parked.keys()]) this.notify(agent)
+}
+```
+
+```ts
+// src/core/service.ts — listen exit condition (service.ts:269) gains the drain check:
+if (records.length > 0 || elapsed >= input.waitMs || this.waiters.isDraining()) {
+```
+
+(The flag must live in the **return condition**, not inside `wait()` — a resolve-immediately
+`wait()` with an unchanged exit condition would busy-loop.)
+
+```ts
+// src/core/service.ts (add near isListening)
+releaseWaiters(): void {
+  this.waiters.releaseAll()
 }
 ```
 
 - [ ] **Step 4: failing test — server close resolves a parked HTTP listen promptly**
 
+The real HTTP contract (from `src/http/app.ts` / `client.ts`): register is
+`POST /api/register` → **201** `{ name, token }`; listen/park is **`GET /api/inbox?waitMs=…`**
+with only the bearer header (do NOT invent a `/api/listen` route — plan-review H2/LOW-1).
+
 ```ts
-// src/http/server.test.ts (add; follow the file's existing startServer test conventions
-// for temp db paths and config construction)
+// src/http/server.test.ts (add; follow the file's existing temp-path conventions)
 it('close() releases parked long-polls, then shuts down cleanly', async () => {
   const dbPath = join(tmpdir(), `ap-shutdown-${process.pid}-${Date.now()}.db`)
   const provisioning = new SqliteStore(dbPath)
@@ -149,12 +199,12 @@ it('close() releases parked long-polls, then shuts down cleanly', async () => {
   const reg = await fetch(`${base}/api/register`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name: 'parked', inviteCode: invite.code }),
-  }).then((r) => r.json())
+  })
+  expect(reg.status).toBe(201)
+  const { token } = await reg.json()
 
-  const parked = fetch(`${base}/api/listen`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${reg.token}` },
-    body: JSON.stringify({ waitMs: 30_000 }),
+  const parked = fetch(`${base}/api/inbox?waitMs=30000`, {
+    headers: { authorization: `Bearer ${token}` },
   })
   await new Promise((r) => setTimeout(r, 150)) // let it park
 
@@ -163,30 +213,32 @@ it('close() releases parked long-polls, then shuts down cleanly', async () => {
   const res = await parked
   expect(res.status).toBe(200)
   expect((await res.json()).messages).toEqual([])
-  expect(Date.now() - t0).toBeLessThan(5_000) // not the 30s window
+  expect(Date.now() - t0).toBeLessThan(5_000) // not the 30s window, and not undici keep-alive
+  await running.close() // idempotent: second close must not throw (MEDIUM-2)
 })
 ```
 
-(Adapt endpoint paths/register body to the actual HTTP contract in `src/http/app.ts` — verify before writing; the shape above is from the API used by `PhoneClient`.)
+- [ ] **Step 5: run it — fails** (close hangs until the poll window / keep-alive timeout)
 
-- [ ] **Step 5: run it — fails** (close hangs until the poll window ends / test times out)
+- [ ] **Step 6: implement idempotent release-then-drain-then-close + shutdown event**
 
-- [ ] **Step 6: implement release-then-close + shutdown event**
-
-```ts
-// src/core/service.ts (add near isListening)
-releaseWaiters(): void {
-  this.waiters.releaseAll()
-}
-```
+Keep-alive reality (plan-review H3/MEDIUM-1): undici `fetch` pools sockets; `srv.close()`
+never reaps idle keep-alive connections, and a single `closeIdleConnections()` call races the
+just-released response (its socket is still active at that instant, idle only after flush).
+Reap on a short unref'd interval until close completes — this only ever touches **idle**
+sockets, so in-flight responses are never truncated:
 
 ```ts
-// src/http/server.ts — close() becomes:
-close: () => {
+// src/http/server.ts — inside startServer, before resolve(...):
+let closing: Promise<void> | undefined
+const doClose = (): Promise<void> => {
   const start = systemClock.now()
   service.releaseWaiters()
   return new Promise<void>((done) => {
+    const reaper = setInterval(() => srv.closeIdleConnections(), 25)
+    reaper.unref()
     srv.close(() => {
+      clearInterval(reaper)
       store.close()
       emitter.emit({
         ts: start, op: 'shutdown', surface: 'http', agent: null,
@@ -194,16 +246,19 @@ close: () => {
       })
       done()
     })
+    srv.closeIdleConnections()
   })
-},
+}
+// in the resolved RunningServer:
+close: () => (closing ??= doClose()),
 ```
 
-(If the emitter's event type constrains `op`, extend it where it is defined. If node keep-alive
-sockets hold `srv.close` open after responses complete, add `srv.closeIdleConnections()`
-immediately after calling `srv.close(...)` — part of this step, not a new design decision.)
+Notes: `PhoneEvent.op` is already `string` — `'shutdown'` needs NO type change; do not add an
+op union or `as any` (arch MEDIUM-4 note). `JsonlEmitter` appends synchronously, so the event
+is durable before exit.
 
-- [ ] **Step 7: wire signals in serve (manual-verify path, no unit test — signal wiring is a
-  thin shell; proven via docker in Task 5)**
+- [ ] **Step 7: wire signals in serve (thin shell — close() logic is what the tests prove;
+  the wiring is verified via docker in Task 5)**
 
 ```ts
 program.command('serve').action(async () => {
@@ -213,11 +268,17 @@ program.command('serve').action(async () => {
   out(`agentphone listening on ${cfg.bind}:${running.port} (db: ${cfg.dbPath})`)
   for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     process.once(sig, () => {
-      void running.close().then(() => process.exit(0))
+      running.close().then(
+        () => process.exit(0),
+        () => process.exit(1), // a swallowed rejection would hang to SIGKILL (MEDIUM-3)
+      )
     })
   }
 })
 ```
+
+(`close()` is idempotent via the `closing ??=` guard, so SIGTERM+SIGINT double-delivery is
+safe.)
 
 - [ ] **Step 8: run the full suite — passes.** Commit:
 
@@ -228,43 +289,67 @@ git commit -m "feat(http,core): graceful shutdown - release parked long-polls, c
 
 ### Task 3: send.ackThrough — reply+ack in one round (G3)
 
-**Files:**
-- Modify: `src/core/contracts.ts:65-68`, `src/core/service.ts` (ack + send + EventFields), `src/cli/index.ts` (send command), `src/cli/commands.ts` (`sendTo`), `src/mcp/tools.ts` (send description only — schema flows via `.shape`)
-- Test: `src/core/service.delivery.test.ts`, `src/http/app.test.ts`, `src/cli/commands.test.ts`
+**Plan-review rev 2 (arch HIGH-2 / tests H1):** `PhoneClient.send` (`src/client/client.ts:84-88`)
+serializes ONLY `{ body: input.body }` — without changing it, the CLI flag parses fine and the
+field silently never reaches the wire (the classic reviewed-as-minor production no-op). The
+client file is in scope and the load-bearing guard is a **real-PhoneClient round-trip test**.
 
-- [ ] **Step 1: failing service tests**
+**Files:**
+- Modify: `src/core/contracts.ts:65-68`, `src/core/ports.ts` (PhoneEvent), `src/core/service.ts` (ack + send + EventFields), **`src/client/client.ts` (send forwards ackThrough)**, `src/cli/index.ts` (send command), `src/cli/commands.ts` (`sendTo`), `src/mcp/tools.ts` (send description only — schema flows via `.shape`)
+- Test: `src/core/service.delivery.test.ts`, **`src/client/client.test.ts`**, `src/cli/commands.test.ts`
+
+- [ ] **Step 1: failing service test** — written against this file's REAL fixtures
+  (`twoAgents()` harness `h`, ctxs `gha`/`vol`, threads created via `h.service.call`):
 
 ```ts
 // src/core/service.delivery.test.ts (add)
-it('send with ackThrough advances the sender cursor with ack semantics, and still delivers', async () => {
-  // arrange per this file's existing helpers: two agents a/b, b has sent messages 1..2 to a
-  const before = await svc.listen(ctxA, { waitMs: 0 })
+it('send with ackThrough advances the sender cursor with ack semantics and still delivers', async () => {
+  const h = twoAgents()
+  const { thread } = await h.service.call(gha, { to: 'volumi', subject: 's', body: 'm1' })
+  await h.service.send(gha, { threadId: thread.id, body: 'm2' })
+
+  const before = await h.service.listen(vol, { waitMs: 0 })
   expect(before.messages.length).toBe(2)
 
-  const res = await svc.send(ctxA, { threadId, body: 'reply', ackThrough: before.cursor })
+  const res = await h.service.send(vol, { threadId: thread.id, body: 'reply', ackThrough: before.cursor })
   expect(res.message.body).toBe('reply')
 
-  const after = await svc.listen(ctxA, { waitMs: 0 })
+  const after = await h.service.listen(vol, { waitMs: 0 })
   expect(after.messages).toEqual([]) // inbox cleared in the same round
 
-  // idempotent + capped, exactly like ack
-  const again = await svc.send(ctxA, { threadId, body: 'reply2', ackThrough: 999_999 })
-  expect(again.message.body).toBe('reply2')
-  const cursorNow = await svc.ack(ctxA, { throughMessageId: 1 }) // lower id must not regress
-  expect(cursorNow.ackedThroughMessageId).toBeGreaterThanOrEqual(before.cursor)
+  // peer still receives the reply (delivery unaffected by the piggyback)
+  const peer = await h.service.listen(gha, { waitMs: 0 })
+  expect(peer.messages.map((m) => m.body)).toContain('reply')
+
+  // capped exactly like ack: an absurd id clamps to the max existing message id
+  await h.service.send(vol, { threadId: thread.id, body: 'reply2', ackThrough: 999_999 })
+  const cursor = await h.service.ack(vol, { throughMessageId: 0 }) // no-op read of cursor
+  expect(cursor.ackedThroughMessageId).toBe(h.store.maxMessageId())
+
+  // canonical wide event carries the piggyback (observability contract, MEDIUM-4)
+  const ev = h.emitter.events.find((e) => e.op === 'send' && e.ackedThrough !== undefined)
+  expect(ev?.ackedThrough).toBe(before.cursor)
 })
 ```
 
-(Write against the file's existing fixture helpers — do not invent new fixtures; assert
-behavior through the public service interface only.)
+(Adapt the exact fixture/property names to what `twoAgents()` really exposes — `h.store`,
+`h.emitter` per the file's existing tests — but keep every assertion. Assert behavior through
+the public service interface only.)
 
 - [ ] **Step 2: run — fails** (zod strips/rejects `ackThrough`, cursor not advanced)
 
-- [ ] **Step 3: implement**
+- [ ] **Step 3: implement core**
 
 ```ts
-// src/core/contracts.ts — SendInputSchema gains:
+// src/core/contracts.ts — SendInputSchema gains (positive() is intentional: acking through 0
+// on a send is meaningless; ack's own min(0) is unchanged — noted asymmetry, plan-review L1):
 ackThrough: z.number().int().positive().optional(),
+```
+
+```ts
+// src/core/ports.ts — PhoneEvent gains (unconditional; the {...ev} spread would compile
+// without it but the canonical event is a product contract — MEDIUM-4):
+ackedThrough?: number
 ```
 
 ```ts
@@ -287,14 +372,37 @@ if (input.ackThrough !== undefined) {
 }
 ```
 
-Add `ackedThrough?: number` to `EventFields` (and to the emitted event type if it is
-constrained where it is defined).
+Add `ackedThrough?: number` to `EventFields` too.
 
-- [ ] **Step 4: failing HTTP contract test** — in `src/http/app.test.ts`, per that file's
-  existing send test: POST send with `ackThrough` included → 200 and the sender's subsequent
-  inbox is empty. Run — fails. Implement: nothing (schema shared) — it should pass once
-  Step 3 lands; if it fails, the surface is not reusing the core schema — fix that, do not
-  duplicate the field.
+- [ ] **Step 4: failing real-client round-trip test — the guard that catches the wire drop**
+
+```ts
+// src/client/client.test.ts (add, following the file's existing boot-real-app style)
+it('send forwards ackThrough so the sender inbox clears in one round', async () => {
+  // per the file's harness: real app + PhoneClient for two agents a/b, thread seeded a->b
+  const got = await b.inbox()
+  expect(got.messages.length).toBeGreaterThan(0)
+  await b.send({ threadId, body: 'reply', ackThrough: got.cursor })
+  const after = await b.inbox()
+  expect(after.messages).toEqual([]) // fails while PhoneClient drops ackThrough
+})
+```
+
+Run — MUST fail (inbox still populated) before touching the client. Then implement:
+
+```ts
+// src/client/client.ts — send() forwards the field:
+send(input: SendInput): Promise<SendOutput> {
+  return this.req('POST', `/api/calls/${input.threadId}/messages`, SendOutputSchema, {
+    body: input.body,
+    ackThrough: input.ackThrough,
+  })
+}
+```
+
+Re-run — green. (No separate raw-fetch `app.test.ts` case: the send route returns 201 and has
+no happy-path template there; this real-client test proves boundary acceptance AND wire
+serialization in one — plan-review M4.)
 
 - [ ] **Step 5: CLI flag**
 
@@ -307,13 +415,15 @@ Thread both paths through (`ackThrough: o.ackThrough !== undefined ? Number(o.ac
 and give `sendTo` an optional `ackThrough` parameter it forwards to `c.send`. Add one
 `commands.test.ts` case per that file's fake-client conventions proving `sendTo` forwards it.
 
-- [ ] **Step 6: MCP description** (schema already flows): send tool description becomes
+- [ ] **Step 6: MCP description** (schema already flows via `SendInputSchema.shape` — that
+  reuse IS the AC3-MCP discharge; a dedicated MCP test would only re-assert zod's `.shape`,
+  which is dependency-owned — plan-review L2): send tool description becomes
   `'Send a message into an existing thread (reopens an ended thread). Pass ackThrough to also ack your inbox through that id — reply+ack in one call.'`
 
 - [ ] **Step 7: full suite green. Commit:**
 
 ```bash
-git add src/core/contracts.ts src/core/service.ts src/core/service.delivery.test.ts src/http/app.test.ts src/cli/index.ts src/cli/commands.ts src/cli/commands.test.ts src/mcp/tools.ts
+git add src/core/contracts.ts src/core/ports.ts src/core/service.ts src/core/service.delivery.test.ts src/client/client.ts src/client/client.test.ts src/cli/index.ts src/cli/commands.ts src/cli/commands.test.ts src/mcp/tools.ts
 git commit -m "feat(core): send.ackThrough - reply and ack in one round on every surface"
 ```
 
