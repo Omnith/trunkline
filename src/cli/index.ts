@@ -4,8 +4,6 @@ import { systemClock } from '../core/clock.js'
 import { loadClientConfig, loadServerConfig } from '../core/config.js'
 import { addAgent, createInvite, listAgentRecords, revokeAgent } from '../core/provisioning.js'
 import { PhoneClient, registerAgent } from '../client/client.js'
-import { startServer } from '../http/server.js'
-import { SqliteStore } from '../store/sqlite.js'
 import { ackAll, bodyFrom, exitCodeFor, formatMessage, listenCommand, sendTo } from './commands.js'
 
 const out = (line: string): void => {
@@ -31,8 +29,10 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8').trim()
 }
 
-const adminStore = (): SqliteStore =>
-  new SqliteStore(process.env.AGENTPHONE_DB ?? './agentphone.db')
+const adminStore = async () => {
+  const { SqliteStore } = await import('../store/sqlite.js')
+  return new SqliteStore(process.env.AGENTPHONE_DB ?? './agentphone.db')
+}
 
 const program = new Command('agentphone').description(
   'phonebook, calls, and voicemail for coding agents',
@@ -167,6 +167,7 @@ program
   })
 
 program.command('serve').action(async () => {
+  const { startServer } = await import('../http/server.js')
   const cfg = loadServerConfig(process.env)
   const running = await startServer(cfg)
   out(`agentphone listening on ${cfg.bind}:${running.port} (db: ${cfg.dbPath})`)
@@ -174,8 +175,8 @@ program.command('serve').action(async () => {
 
 const admin = program.command('admin').description('server-host provisioning (direct db access)')
 
-admin.command('add <name>').action((name: string) => {
-  const store = adminStore()
+admin.command('add <name>').action(async (name: string) => {
+  const store = await adminStore()
   try {
     const res = addAgent(store, systemClock, name)
     out(`agent "${res.name}" added`)
@@ -191,8 +192,8 @@ admin
   .command('invite')
   .option('--name <name>', 'pin the invite to a specific agent name')
   .option('--ttl-hours <hours>', 'invite validity window', '24')
-  .action((o: { name?: string; ttlHours: string }) => {
-    const store = adminStore()
+  .action(async (o: { name?: string; ttlHours: string }) => {
+    const store = await adminStore()
     try {
       const res = createInvite(store, systemClock, {
         pinnedName: o.name,
@@ -204,8 +205,8 @@ admin
     }
   })
 
-admin.command('list').action(() => {
-  const store = adminStore()
+admin.command('list').action(async () => {
+  const store = await adminStore()
   try {
     for (const a of listAgentRecords(store)) {
       out(`${a.name}  lastSeen=${new Date(a.lastSeenAt).toISOString()}`)
@@ -215,8 +216,8 @@ admin.command('list').action(() => {
   }
 })
 
-admin.command('revoke <name>').action((name: string) => {
-  const store = adminStore()
+admin.command('revoke <name>').action(async (name: string) => {
+  const store = await adminStore()
   try {
     revokeAgent(store, name)
     out(`agent "${name}" revoked`)
