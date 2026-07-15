@@ -1,6 +1,7 @@
 // in-process long-poll registry: one Set of wakeup callbacks per agent name
 export class Waiters {
   private readonly parked = new Map<string, Set<() => void>>()
+  // one-way latch: once draining, long-polls return empty immediately - shutdown only
   private draining = false
 
   isListening(agent: string): boolean {

@@ -34,16 +34,20 @@ export function startServer(cfg: ServerConfig): Promise<RunningServer> {
           reaper.unref()
           srv.close(() => {
             clearInterval(reaper)
-            store.close()
-            emitter.emit({
-              ts: start,
-              op: 'shutdown',
-              surface: 'http',
-              agent: null,
-              outcome: 'ok',
-              durationMs: systemClock.now() - start,
-            })
-            done()
+            // the close promise must always settle, even if store/emitter throw
+            try {
+              store.close()
+              emitter.emit({
+                ts: start,
+                op: 'shutdown',
+                surface: 'http',
+                agent: null,
+                outcome: 'ok',
+                durationMs: systemClock.now() - start,
+              })
+            } finally {
+              done()
+            }
           })
           srv.closeIdleConnections()
         })

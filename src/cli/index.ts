@@ -176,6 +176,8 @@ program.command('serve').action(async () => {
   // close() is idempotent via its closing-guard, so SIGTERM+SIGINT double-delivery is safe
   for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     process.once(sig, () => {
+      // if close() neither resolves nor rejects, exit anyway before docker's grace SIGKILLs
+      setTimeout(() => process.exit(1), 5_000).unref()
       running.close().then(
         () => process.exit(0),
         () => process.exit(1), // a swallowed rejection would hang to SIGKILL

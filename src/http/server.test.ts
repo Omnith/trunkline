@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
@@ -66,5 +66,13 @@ describe('startServer', () => {
     expect(((await res.json()) as { messages: unknown[] }).messages).toEqual([])
     expect(Date.now() - t0).toBeLessThan(5_000) // not the 30s window, and not undici keep-alive
     await running.close() // idempotent: second close must not throw
+
+    // exactly one canonical shutdown event, despite the double close
+    const events = readFileSync(join(dir, 'events.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as { op: string; outcome: string })
+    expect(events.filter((e) => e.op === 'shutdown')).toHaveLength(1)
+    expect(events.find((e) => e.op === 'shutdown')?.outcome).toBe('ok')
   })
 })
