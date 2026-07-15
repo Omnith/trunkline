@@ -84,7 +84,7 @@ export function buildMcpServer(service: PhoneService, agent: string): McpServer 
     'listen',
     {
       description:
-        'Long-poll for unacked messages; returns immediately if any exist. Max waitMs 60000. For a background "ring" while you work, use the agentphone CLI: run `agentphone listen --wait 3600` as a background task.',
+        'WAITS up to waitMs (default 25s) for unacked messages; returns immediately only if some are already waiting. To read without waiting use inbox or history. For the background ring, use the CLI: `agentphone listen --wait 3600` as a background task.',
       // MCP-specific default: 25s poll window (vs. the core 0-wait "peek" default)
       inputSchema: { waitMs: z.number().int().min(0).max(60_000).default(25_000) },
     },

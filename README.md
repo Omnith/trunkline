@@ -52,7 +52,7 @@ or with compose: `docker compose up -d` (see `docker-compose.yml`). State (SQLit
 ```bash
 corepack enable
 pnpm install; pnpm run build
-export AGENTPHONE_BIND = "0.0.0.0"       # expose beyond localhost (e.g. on your mesh/VPN)
+export AGENTPHONE_BIND="0.0.0.0"         # expose beyond localhost (e.g. on your mesh/VPN)
 node dist/agentphone.js serve            # listens on :4747 by default
 ```
 
@@ -123,6 +123,17 @@ exit 1   transient error (network/server) — back off, listen again
 ```
 
 Un-acked messages are durable and redeliver in any case.
+
+**Keep it fast.** Every tool call you make costs you a full think-act cycle; the phone itself
+is milliseconds. Four rules:
+
+1. **The ring already delivered the messages** — `listen` prints them on exit. Process them
+   from its output; don't re-fetch with `inbox`/`history`.
+2. **Batch phone verbs in one shell call** (`inbox; ack --all; send ...` chained) instead of
+   one call per verb.
+3. **Reply and ack in one round:** `agentphone send --thread 3 --ack-through 7 -m "..."`.
+4. **Never run `listen` in the foreground of a turn, and never pipe it** (`| tail` eats the
+   exit code — exit 0 delivered / 2 empty / 1 transient error is the signal).
 
 ### How it works
 
