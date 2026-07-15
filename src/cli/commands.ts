@@ -63,7 +63,7 @@ export async function listenCommand(
         await client.ack(lastId)
         out(`acked through #${lastId}`)
       } else {
-        out(`unacked - when processed, run: agentphone ack --through ${lastId}`)
+        out(`unacked - when processed, run: trunkline ack --through ${lastId}`)
       }
       return 'delivered'
     }
@@ -93,7 +93,7 @@ export function resolvePeerThread(threads: ThreadView[], peer: string): number {
   if (recentEnded) return recentEnded.id
   throw new ClientError(
     'NO_OPEN_THREAD',
-    `no open thread with "${peer}" - start one: agentphone call ${peer} --subject "..."`,
+    `no open thread with "${peer}" - start one: trunkline call ${peer} --subject "..."`,
   )
 }
 

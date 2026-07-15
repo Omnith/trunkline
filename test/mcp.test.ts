@@ -118,7 +118,7 @@ describe('mcp surface', () => {
 
   test('a bad token cannot connect', async () => {
     const { url } = await boot()
-    await expect(connect(url, 'ap_wrong')).rejects.toThrow()
+    await expect(connect(url, 'tl_wrong')).rejects.toThrow()
   })
 
   test('GET /mcp returns 405 (stateless server)', async () => {

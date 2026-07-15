@@ -31,10 +31,10 @@ async function readStdin(): Promise<string> {
 
 const adminStore = async () => {
   const { SqliteStore } = await import('../store/sqlite.js')
-  return new SqliteStore(process.env.AGENTPHONE_DB ?? './agentphone.db')
+  return new SqliteStore(process.env.TRUNKLINE_DB ?? './trunkline.db')
 }
 
-const program = new Command('agentphone').description(
+const program = new Command('trunkline').description(
   'phonebook, calls, and voicemail for coding agents',
 )
 
@@ -42,15 +42,15 @@ program
   .command('register')
   .requiredOption('--name <name>')
   .requiredOption('--invite <code>')
-  .option('--url <url>', 'server url (defaults to AGENTPHONE_URL)')
+  .option('--url <url>', 'server url (defaults to TRUNKLINE_URL)')
   .action(async (o: { name: string; invite: string; url?: string }) => {
-    const url = o.url ?? process.env.AGENTPHONE_URL
-    if (!url) fail(new Error('pass --url or set AGENTPHONE_URL'))
+    const url = o.url ?? process.env.TRUNKLINE_URL
+    if (!url) fail(new Error('pass --url or set TRUNKLINE_URL'))
     const res = await registerAgent(url as string, { name: o.name, inviteCode: o.invite }).catch(
       fail,
     )
     out(`registered "${res.name}"`)
-    out(`token (shown once - store it as AGENTPHONE_TOKEN): ${res.token}`)
+    out(`token (shown once - store it as TRUNKLINE_TOKEN): ${res.token}`)
   })
 
 program
@@ -120,7 +120,7 @@ program.command('inbox').action(async () => {
     return
   }
   for (const m of res.messages) out(formatMessage(m))
-  out(`unacked - when processed, run: agentphone ack --through ${res.cursor}`)
+  out(`unacked - when processed, run: trunkline ack --through ${res.cursor}`)
 })
 
 program
@@ -172,7 +172,7 @@ program.command('serve').action(async () => {
   const { startServer } = await import('../http/server.js')
   const cfg = loadServerConfig(process.env)
   const running = await startServer(cfg)
-  out(`agentphone listening on ${cfg.bind}:${running.port} (db: ${cfg.dbPath})`)
+  out(`trunkline listening on ${cfg.bind}:${running.port} (db: ${cfg.dbPath})`)
   // close() is idempotent via its closing-guard, so SIGTERM+SIGINT double-delivery is safe
   for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     process.once(sig, () => {

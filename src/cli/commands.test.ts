@@ -49,7 +49,7 @@ describe('resolvePeerThread', () => {
     expect(resolvePeerThread(threads, 'volumi')).toBe(1)
   })
   test('errors helpfully when there is no open thread', () => {
-    expect(() => resolvePeerThread([], 'volumi')).toThrow(/agentphone call volumi/)
+    expect(() => resolvePeerThread([], 'volumi')).toThrow(/trunkline call volumi/)
   })
   test('errors listing candidates when ambiguous', () => {
     const threads = [threadView(1, 'ci', 'open'), threadView(2, 'infra', 'open')]

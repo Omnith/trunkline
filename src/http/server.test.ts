@@ -11,11 +11,11 @@ import { startServer } from './server.js'
 // fresh temp db/events per config so no repo files are created and the only
 // difference between two configs is the bind port
 function cfgOnPort(port: number): ServerConfig {
-  const dir = mkdtempSync(join(tmpdir(), 'agentphone-server-'))
+  const dir = mkdtempSync(join(tmpdir(), 'trunkline-server-'))
   return {
     port,
     bind: '127.0.0.1',
-    dbPath: join(dir, 'agentphone.db'),
+    dbPath: join(dir, 'trunkline.db'),
     eventsPath: join(dir, 'events.jsonl'),
     threadTtlHours: 24,
   }
@@ -32,8 +32,8 @@ describe('startServer', () => {
   }, 5000)
 
   test('close() releases parked long-polls, then shuts down cleanly', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'agentphone-shutdown-'))
-    const dbPath = join(dir, 'agentphone.db')
+    const dir = mkdtempSync(join(tmpdir(), 'trunkline-shutdown-'))
+    const dbPath = join(dir, 'trunkline.db')
     const provisioning = new SqliteStore(dbPath)
     const invite = createInvite(provisioning, systemClock, { ttlHours: 1 })
     provisioning.close()
