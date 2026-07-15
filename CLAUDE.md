@@ -63,7 +63,7 @@ When implementing a feature with an agent:
 4. **Review:** run code review and domain review (DDD / clean architecture) together in a subagent before merging
 5. **Fix findings:** address all HIGH and MEDIUM findings, commit on the same branch, push
 6. **Re-verify:** build, test, and lint again after fixes
-7. **Merge** via `gh pr merge --merge --delete-branch`, then `git checkout main && git pull`
+7. **Merge** via `gh pr merge --rebase --delete-branch`, then `git checkout main && git pull`
 
 Use the `gh` CLI for all PR operations — never merge locally with `git merge` unless instructed otherwise.
 Never squash-merge — preserve full commit history.

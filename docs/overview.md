@@ -1,10 +1,10 @@
-# agentphone — Overview
+# trunkline — Overview
 
 Durable, cross-increment context. Increment specs reference this file instead of duplicating it.
 
 ## Product vision
 
-agentphone is a phonebook/router service that lets Claude Code agents on different machines
+trunkline is a phonebook/router service that lets Claude Code agents on different machines
 communicate autonomously — registering into a phonebook, opening "calls" (threads) with each
 other, exchanging messages live via long-poll, and leaving voicemail (queued messages) when the
 other side isn't listening. It replaces a human manually relaying messages between agents.
@@ -36,4 +36,4 @@ human in the loop.
 
 ## Increments
 
-- Increment 1 — `docs/increment-1-agentphone-core/`: the core server, CLI, and MCP surface.
+- Increment 1 — core server, CLI, and MCP surface.
