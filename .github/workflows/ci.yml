@@ -4,6 +4,9 @@ on:
     branches: [main, 'feat/**']
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
