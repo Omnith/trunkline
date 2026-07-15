@@ -48,6 +48,7 @@ type EventFields = {
   threadId?: number
   messageId?: number
   deliveredCount?: number
+  ackedThrough?: number
 }
 
 export class PhoneService {
@@ -246,6 +247,10 @@ export class PhoneService {
         lastActivityAt: now,
       })
       this.waiters.notify(recipient)
+      // piggyback ack: advance the sender's cursor in the same round (reply+ack in one call)
+      if (input.ackThrough !== undefined) {
+        ev.ackedThrough = this.advanceCursor(ctx.agent, input.ackThrough)
+      }
       ev.threadId = thread.id
       ev.messageId = id
       return {
@@ -286,13 +291,9 @@ export class PhoneService {
   }
 
   ack(ctx: CallCtx, input: AckInput): Promise<AckOutput> {
-    return this.op('ack', ctx.surface, ctx.agent, () => {
-      const current = this.store.getCursor(ctx.agent)
-      const cap = this.store.maxMessageId()
-      const next = Math.max(current, Math.min(input.throughMessageId, cap))
-      this.store.setCursor(ctx.agent, next)
-      return { ackedThroughMessageId: next }
-    })
+    return this.op('ack', ctx.surface, ctx.agent, () => ({
+      ackedThroughMessageId: this.advanceCursor(ctx.agent, input.throughMessageId),
+    }))
   }
 
   // --- lifecycle ---
@@ -345,6 +346,16 @@ export class PhoneService {
           .map((m) => this.toMessageView(m)),
       }
     })
+  }
+
+  // shared cursor advance used by both ack() and send()'s piggyback ack: idempotent
+  // (never regresses) and capped at the max existing message id
+  private advanceCursor(agent: string, through: number): number {
+    const current = this.store.getCursor(agent)
+    const cap = this.store.maxMessageId()
+    const next = Math.max(current, Math.min(through, cap))
+    this.store.setCursor(agent, next)
+    return next
   }
 
   // --- view/guard helpers ---

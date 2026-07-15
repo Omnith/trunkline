@@ -84,14 +84,16 @@ program
   .option('--thread <id>')
   .option('--to <agent>')
   .option('-m, --message <body>')
-  .action(async (o: { thread?: string; to?: string; message?: string }) => {
+  .option('--ack-through <id>', 'ack your inbox through this message id in the same round')
+  .action(async (o: { thread?: string; to?: string; message?: string; ackThrough?: string }) => {
     const c = client()
     const body = await bodyFrom(o.message, readStdin)
+    const ackThrough = o.ackThrough !== undefined ? Number(o.ackThrough) : undefined
     if (o.thread !== undefined) {
-      const res = await c.send({ threadId: Number(o.thread), body }).catch(fail)
+      const res = await c.send({ threadId: Number(o.thread), body, ackThrough }).catch(fail)
       out(`sent #${res.message.id} to ${res.message.recipient} (thread #${res.message.threadId})`)
     } else if (o.to !== undefined) {
-      const res = await sendTo(c, o.to, body).catch(fail)
+      const res = await sendTo(c, o.to, body, ackThrough).catch(fail)
       out(`sent #${res.message.id} to ${res.message.recipient} (thread #${res.message.threadId})`)
     } else {
       fail(new Error('pass --thread <id> or --to <agent>'))

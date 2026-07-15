@@ -21,6 +21,7 @@ export interface PhoneEvent {
   threadId?: number
   messageId?: number
   deliveredCount?: number
+  ackedThrough?: number
 }
 
 export interface Emitter {

@@ -101,10 +101,11 @@ export async function sendTo(
   client: SendToClient,
   peer: string,
   body: string,
+  ackThrough?: number,
 ): Promise<SendOutput> {
   const { threads } = await client.threads('all')
   const threadId = resolvePeerThread(threads, peer)
-  return client.send({ threadId, body })
+  return client.send({ threadId, body, ackThrough })
 }
 
 export async function ackAll(client: AckAllClient): Promise<number> {

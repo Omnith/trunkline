@@ -65,6 +65,9 @@ export const CallOutputSchema = z.object({
 export const SendInputSchema = z.object({
   threadId: z.number().int().positive(),
   body: MessageBodySchema,
+  // piggyback ack: advance the sender's cursor through this id in the same round.
+  // positive() is intentional — acking through 0 on a send is meaningless (ack's own min(0) is unchanged).
+  ackThrough: z.number().int().positive().optional(),
 })
 export const SendOutputSchema = z.object({ message: MessageViewSchema })
 

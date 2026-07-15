@@ -41,6 +41,38 @@ describe('send', () => {
       h.service.send({ agent: 'intruder', surface: 'http' }, { threadId: thread.id, body: 'hi' }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
+
+  test('send with ackThrough advances the sender cursor with ack semantics and still delivers', async () => {
+    const h = twoAgents()
+    const { thread } = await h.service.call(gha, { to: 'volumi', subject: 's', body: 'm1' })
+    await h.service.send(gha, { threadId: thread.id, body: 'm2' })
+
+    const before = await h.service.listen(vol, { waitMs: 0 })
+    expect(before.messages.length).toBe(2)
+
+    const res = await h.service.send(vol, {
+      threadId: thread.id,
+      body: 'reply',
+      ackThrough: before.cursor,
+    })
+    expect(res.message.body).toBe('reply')
+
+    const after = await h.service.listen(vol, { waitMs: 0 })
+    expect(after.messages).toEqual([]) // inbox cleared in the same round
+
+    // peer still receives the reply (delivery unaffected by the piggyback)
+    const peer = await h.service.listen(gha, { waitMs: 0 })
+    expect(peer.messages.map((m) => m.body)).toContain('reply')
+
+    // capped exactly like ack: an absurd id clamps to the max existing message id
+    await h.service.send(vol, { threadId: thread.id, body: 'reply2', ackThrough: 999_999 })
+    const cursor = await h.service.ack(vol, { throughMessageId: 0 }) // no-op read of cursor
+    expect(cursor.ackedThroughMessageId).toBe(h.store.maxMessageId())
+
+    // canonical wide event carries the piggyback (observability contract)
+    const ev = h.emitter.events.find((e) => e.op === 'send' && e.ackedThrough !== undefined)
+    expect(ev?.ackedThrough).toBe(before.cursor)
+  })
 })
 
 describe('at-least-once delivery', () => {
