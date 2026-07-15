@@ -1,0 +1,12 @@
+services:
+  agentphone:
+    image: ghcr.io/omnith/agentphone:latest
+    container_name: agentphone
+    ports:
+      - '4747:4747'
+    volumes:
+      - agentphone-data:/data
+    restart: unless-stopped
+
+volumes:
+  agentphone-data:
