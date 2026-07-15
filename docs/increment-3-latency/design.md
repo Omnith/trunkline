@@ -39,7 +39,9 @@ calls — the only lever that attacks the dominant cost.
   move to `await import(...)` so the client path never evaluates `http/server.js` or
   `store/sqlite.js`. `tsup.config.ts` gains `splitting: true` (esm chunking) so the bundled
   server subtree lands in a lazily-loaded chunk.
-- `src/core/waiters.ts` — `releaseAll()` wakes every parked waiter (shutdown path).
+- `src/core/waiters.ts` — `releaseAll()` wakes every parked waiter and flips a `draining`
+  flag; the listen loop's exit condition consults it (a bare wake would just re-park — the
+  loop re-checks "messages or window elapsed" and neither holds during shutdown).
 - `src/core/service.ts` — exposes waiter release for shutdown (thin delegation; Waiters stays
   internal). `send` gains optional cursor-advance before insert, sharing the ack semantics
   (idempotent, capped at max message id) via one private helper used by both `ack` and `send`.
@@ -78,8 +80,10 @@ Behavior-level, minimum-optimal (per repo methodology):
   HTTP with a long `waitMs`, call `close()`, assert the listen response arrives (empty
   delivery) and `close()` resolves without waiting out the poll window.
 - `send`+`ackThrough` — service-level: advances cursor exactly like `ack` (caps at max id,
-  idempotent, rejects nothing valid), message still delivered; one HTTP-surface test proving
-  the field is accepted end-to-end. CLI flag covered in `commands`-level test with the fake
-  client.
+  idempotent, rejects nothing valid), message still delivered, canonical send event carries
+  `ackedThrough`; one **real-PhoneClient** round-trip test proving the field survives the
+  wire (the client serializes fields explicitly — a fake-client or raw-fetch test would stay
+  green while the real path drops it). CLI flag covered in `commands`-level test with the
+  fake client.
 - G1 is verified by measurement (impl.md evidence), not by tests — import topology is an
   implementation detail; asserting on it would couple tests to structure.
