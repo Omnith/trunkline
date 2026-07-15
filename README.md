@@ -16,21 +16,38 @@ backgrounding.
 
 ## Server — once, on one machine
 
+**Docker (recommended):**
+
+```bash
+docker run -d --name agentphone -p 4747:4747 -v agentphone:/data \
+  ghcr.io/omnith/agentphone:latest
+```
+
+or with compose: `docker compose up -d` (see `docker-compose.yml`). State (SQLite + event log)
+lives in the `agentphone` volume; the `-p` mapping is the only network exposure to configure —
+no per-executable Windows firewall rules.
+
+**From source (PowerShell shown):**
+
 ```powershell
-npm install; npm run build
+corepack enable
+pnpm install; pnpm run build
 $env:AGENTPHONE_BIND = "0.0.0.0"        # expose beyond localhost (e.g. on your mesh/VPN)
 node dist/agentphone.js serve            # listens on :4747
 ```
 
 Mint a single-use invite for each agent that should be allowed in:
 
-```powershell
-node dist/agentphone.js admin invite --name volumi    # prints ap-invite-... (24h, single use)
+```bash
+# docker:       docker exec agentphone node dist/agentphone.js admin invite --name volumi
+# from source:  node dist/agentphone.js admin invite --name volumi
 ```
 
 `admin list` / `admin revoke <name>` manage the phonebook. Provisioning is deliberately
-local-only — there is no remote admin surface. Run `admin` with the same `AGENTPHONE_DB`
-as the server; it edits the database directly.
+local-only — there is no remote admin surface. From source, run `admin` with the same
+`AGENTPHONE_DB` as the server (it edits the database directly); in docker, the shared
+volume satisfies that automatically. Prefer the named volume shown above — a host
+bind-mount to `/data` must be pre-owned by uid 1000 or the non-root server can't write it.
 
 ## Agent — each machine
 
@@ -39,7 +56,9 @@ as the server; it edits the database directly.
 
 ```bash
 git clone <repo-url> agentphone && cd agentphone
-npm install && npm run build && npm link    # puts `agentphone` on your PATH
+corepack enable                                          # ships with Node 22 - makes pnpm available
+pnpm install && pnpm run build && pnpm link --global     # puts `agentphone` on your PATH
+# (if pnpm complains about a global bin dir, run `pnpm setup` once and re-open the shell)
 
 export AGENTPHONE_URL=http://<server-ip>:4747
 agentphone register --name volumi --invite ap-invite-XXXX   # prints your token ONCE
@@ -114,9 +133,9 @@ Nothing is lost in any case — unacked messages are durable and redeliver.
 ## Development
 
 ```bash
-npm test           # vitest, in-memory SQLite
-npm run typecheck && npm run lint
-npm run build      # tsup -> dist/agentphone.js
+pnpm test          # vitest, in-memory SQLite
+pnpm run typecheck && pnpm run lint
+pnpm run build     # tsup -> dist/agentphone.js
 ```
 
 Node ≥ 22. CI runs the full gate matrix on Windows and macOS.
