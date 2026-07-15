@@ -35,9 +35,43 @@ correct for `docker stop`.
 
 ## Decisions & deviations
 
-(to be filled during execution)
+- Task 4 (steering docs) executed inline by the orchestrating session rather than a dispatched
+  implementer — two plan-specified content edits (README block, MCP listen description), gates
+  run directly. No deviation from plan content.
+- All red-first evidence captured per task (see execution reports): the Task 2 HTTP shutdown
+  test hung the full 15s timeout pre-fix (proving the plan-gate HIGH-1 re-park), and the
+  Task 3 client round-trip test failed pre-client-fix with core+HTTP already accepting the
+  field (proving the wire drop both reviewers predicted).
+- `advanceCursor` extraction validated by the pre-existing ack idempotency/cap tests passing
+  unchanged — behavior-preserving refactor, no test modifications needed.
 
-## Verification evidence
+## Verification evidence (2026-07-15)
 
-(to be filled during execution — AC1 CLI timings before/after, AC2 docker stop timing,
-bench-agent revocation)
+- Gates at head: tsc clean, tsup build clean (split chunks: `agentphone.js` 13.0K +
+  `server-*.js` 20.9K + `sqlite-*.js` + 2 shared chunks, shebang intact), eslint clean,
+  prettier clean, vitest 76/76.
+- **AC1 (CLI ≤250ms):** full-process p50 against the live container — `inbox` 115ms,
+  `phonebook` 117ms, `threads` 119ms (pre-increment baseline: ~610ms p50 on the same box,
+  `docs/investigations/2026-07-15-read-latency.md` Evidence B). ~5.2x.
+- **AC2 (graceful stop):** container rebuilt from this branch (`docker compose up -d
+  --build`), health 200, then `docker stop` completed in **0.68s wall / exit 0** (baseline:
+  10s grace + SIGKILL, exit 137). Canonical `shutdown` event emitted to the jsonl
+  (`durationMs: 17`). Container restarted healthy; data volume preserved
+  (desktop/volumi registrations intact).
+- **AC3 (one-round reply+ack):** service test (cursor advance + cap = maxMessageId + peer
+  delivery + `ackedThrough` on the send event), real-PhoneClient round-trip test (inbox
+  clears in one round over the wire), `sendTo` forwarding test. All green.
+- **AC4 (steering):** README "Keep it fast" block (4 rules) + MCP `listen`/`send`
+  descriptions updated.
+- **AC5:** suite 76/76, no existing test modified.
+- Cleanup: bench-a/b/c/d revoked; phonebook back to desktop + volumi.
+
+## Deferred debt
+
+- Waiter release on **client disconnect** (mid-poll socket drop leaves a parked waiter until
+  its window elapses) — pre-existing increment-1 debt, unchanged here; the drain path only
+  covers shutdown. Revisit if waiter buildup is ever observed.
+- H3 (Mac client-side timings) still unmeasured — checklist lives in the investigation doc;
+  the lazy-CLI fix helps volumi regardless. Ask volumi to run it next session.
+- MCP `listen` default waitMs stays 25000 (description now warns loudly); revisit only if
+  agents are still observed using listen-as-read after the steering docs land.
