@@ -54,5 +54,17 @@
   builds, health 200 on :47473, one-shot invite mints `ap-invite-…`. CI run 29384554498 (headSha
   bccb19e) green: docker job smoke passed with BOTH invite forms (one-shot + `docker exec`),
   GHCR login/push steps correctly SKIPPED off-main. Test matrix green in both runs.
-- (filled at close) Post-merge publish run, GHCR tags, visibility flip, published-image
-  pull-and-run.
+- Post-merge publish (2026-07-15): PR #2 merged as part of main; main-push run 29385156253
+  fully green including the multiarch push — the GHCR package exists (anonymous
+  `docker manifest inspect` returns unauthorized, i.e. published-but-private, as expected).
+- **Visibility flip deferred by user decision** — the package stays PRIVATE for now. AC2/AC3's
+  "anonymous pull + published-image run" remainder is superseded by the private-registry
+  workflow: compose gained a `build: .` fallback (`docker compose up -d --build` builds from a
+  clone and tags under the image name) and the README documents the authenticated-pull
+  alternative (PAT with `read:packages`). Image correctness was already proven by the local
+  Docker build smoke + the CI smoke of the exact bits that were pushed (shared gha cache).
+- arm64 acceptance: a native `docker compose up -d --build` on the MacBook covers it without
+  registry access (pending, user-side).
+- Watch-out recorded: private GHCR storage is quota-limited on free org plans and each main
+  push adds a multiarch `sha-*` version — prune old versions or flip to public before the
+  quota bites.

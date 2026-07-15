@@ -27,6 +27,10 @@ or with compose: `docker compose up -d` (see `docker-compose.yml`). State (SQLit
 lives in the `agentphone` volume; the `-p` mapping is the only network exposure to configure —
 no per-executable Windows firewall rules.
 
+> **Private registry note:** the GHCR image is currently private. Either build from a clone —
+> `docker compose up -d --build` (tags the local build under the same image name) — or do a
+> one-time `docker login ghcr.io` with a PAT that has `read:packages`, then pull as shown.
+
 **From source (PowerShell shown):**
 
 ```powershell

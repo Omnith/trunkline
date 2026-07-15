@@ -1,6 +1,9 @@
 services:
   agentphone:
     image: ghcr.io/omnith/agentphone:latest
+    # registry image is private: `docker compose up -d --build` builds from this
+    # clone instead (and tags it under the image name above)
+    build: .
     container_name: agentphone
     ports:
       - '4747:4747'
