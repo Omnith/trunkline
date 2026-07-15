@@ -35,4 +35,14 @@ describe('Waiters', () => {
     expect(w.isListening('gha-docker-runner')).toBe(true)
     await other
   })
+
+  test('releaseAll wakes every parked waiter and clears listening state', async () => {
+    const w = new Waiters()
+    const a = w.wait('volumi', 60_000)
+    const b = w.wait('desktop', 60_000)
+    w.releaseAll()
+    await Promise.all([a, b]) // resolves without waiting out the window
+    expect(w.isListening('volumi')).toBe(false)
+    expect(w.isListening('desktop')).toBe(false)
+  })
 })

@@ -21,15 +21,36 @@ export function startServer(cfg: ServerConfig): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
     const srv = app.listen(cfg.port, cfg.bind, () => {
       const port = (srv.address() as AddressInfo).port
+      // graceful shutdown: release parked long-polls first so they respond empty, then close.
+      // undici pools keep-alive sockets that srv.close() will not reap on its own, so keep
+      // reaping idle sockets on a short unref'd interval until close completes - this only ever
+      // touches idle sockets, so the just-released responses are never truncated.
+      let closing: Promise<void> | undefined
+      const doClose = (): Promise<void> => {
+        const start = systemClock.now()
+        service.releaseWaiters()
+        return new Promise<void>((done) => {
+          const reaper = setInterval(() => srv.closeIdleConnections(), 25)
+          reaper.unref()
+          srv.close(() => {
+            clearInterval(reaper)
+            store.close()
+            emitter.emit({
+              ts: start,
+              op: 'shutdown',
+              surface: 'http',
+              agent: null,
+              outcome: 'ok',
+              durationMs: systemClock.now() - start,
+            })
+            done()
+          })
+          srv.closeIdleConnections()
+        })
+      }
       resolve({
         port,
-        close: () =>
-          new Promise<void>((done) => {
-            srv.close(() => {
-              store.close()
-              done()
-            })
-          }),
+        close: () => (closing ??= doClose()),
       })
     })
     // bind failures (e.g. EADDRINUSE) fire 'error', never the listen callback
