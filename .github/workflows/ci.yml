@@ -53,26 +53,26 @@ jobs:
           context: .
           platforms: linux/amd64
           load: true
-          tags: agentphone:smoke
+          tags: trunkline:smoke
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Smoke test image (health + admin invite)
         run: |
-          docker volume create ap-smoke
-          docker run -d --name ap -p 47472:4747 -v ap-smoke:/data agentphone:smoke
+          docker volume create tl-smoke
+          docker run -d --name tl -p 47472:4747 -v tl-smoke:/data trunkline:smoke
           ok=""
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:47472/api/health >/dev/null 2>&1; then ok=1; break; fi
             sleep 2
           done
-          if [ -z "$ok" ]; then docker logs ap; exit 1; fi
-          out=$(docker run --rm -v ap-smoke:/data agentphone:smoke admin invite --name ci-smoke)
+          if [ -z "$ok" ]; then docker logs tl; exit 1; fi
+          out=$(docker run --rm -v tl-smoke:/data trunkline:smoke admin invite --name ci-smoke)
           echo "$out"
-          echo "$out" | grep -q "ap-invite-" || exit 1
-          out2=$(docker exec ap node dist/agentphone.js admin invite --name ci-smoke-exec)
+          echo "$out" | grep -q "tl-invite-" || exit 1
+          out2=$(docker exec tl node dist/trunkline.js admin invite --name ci-smoke-exec)
           echo "$out2"
-          echo "$out2" | grep -q "ap-invite-" || exit 1
-          docker rm -f ap
+          echo "$out2" | grep -q "tl-invite-" || exit 1
+          docker rm -f tl
       - name: Log in to GHCR
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -84,7 +84,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ghcr.io/omnith/agentphone
+          images: ghcr.io/omnith/trunkline
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
