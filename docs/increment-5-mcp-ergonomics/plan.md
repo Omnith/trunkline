@@ -222,7 +222,7 @@ call costs you a full think-act cycle; the server is milliseconds. Rules:
 2. Reply and ack in ONE call: send {to: "<peer>", body, ackThrough: <cursor>} - to is the
    peer name; no threads lookup needed.
 3. snapshot = phonebook + open threads + unacked inbox in one call - the "what's my state" opener.
-4. Messages redeliver until acked; ack with listen/inbox {ack:true} or send.ackThrough.`
+4. Messages redeliver until acked; ack with listen {ack:true} or send.ackThrough.`
 
 const server = new McpServer({ name: 'trunkline', version: '0.1.0' }, { instructions: INSTRUCTIONS })
 ```
