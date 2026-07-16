@@ -89,6 +89,7 @@ export interface InviteStore {
 export interface ThreadStore {
   insertThread(t: Omit<ThreadRecord, 'id'>): number
   getThread(id: number): ThreadRecord | null
+  // ordering contract: lastActivityAt DESC, id DESC - peer resolution relies on it
   listThreadsFor(agent: string): ThreadRecord[]
   updateThread(t: ThreadRecord): void
 }
