@@ -5,12 +5,19 @@ on:
     paths:
       - 'site/**'
       - '.github/workflows/pages.yml'
+  # PR-time validation: build + link gate only, no deploy (site changes skip the test matrix,
+  # so this is the only pre-merge check the site gets)
+  pull_request:
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions: {}
 
+# deploys stay serialized in one group; PR builds get their own group so they never queue a deploy
 concurrency:
-  group: pages
+  group: ${{ github.event_name == 'pull_request' && format('pages-pr-{0}', github.event.number) || 'pages' }}
   cancel-in-progress: false
 
 jobs:
@@ -34,10 +41,12 @@ jobs:
       - run: node check-dist.mjs
         working-directory: site
       - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        if: github.event_name != 'pull_request'
         with:
           path: site/dist
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     permissions:

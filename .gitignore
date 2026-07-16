@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+.astro/
 *.db
 *.db-journal
 *.db-wal

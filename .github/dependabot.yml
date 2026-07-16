@@ -17,3 +17,14 @@ updates:
         dependency-type: development
       production-dependencies:
         dependency-type: production
+
+  # the docs site is its own pnpm project; without this it gets alerts but no update PRs
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      site-dependencies:
+        patterns: ['*']
