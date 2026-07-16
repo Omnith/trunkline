@@ -7,17 +7,17 @@ import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
 import '../styles/global.css'
 
-import { readFileSync } from 'node:fs'
+// version comes from the root package at build time - never drifts from releases.
+// static import: vite resolves it from this source file, unlike import.meta.url which
+// pointed at the compiled module's location and broke under astro 6
+import rootPkg from '../../../package.json'
 
 interface Props {
   title: string
   description: string
 }
 const { title, description } = Astro.props
-// version comes from the root package at build time - never drifts from releases
-const VERSION = JSON.parse(
-  readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'),
-).version
+const VERSION = rootPkg.version
 const canonical = new URL(Astro.url.pathname, Astro.site)
 const FAVICON =
   'data:image/svg+xml,' +

@@ -2,6 +2,11 @@
   "name": "trunkline-site",
   "private": true,
   "type": "module",
+  "pnpm": {
+    "overrides": {
+      "esbuild": "^0.28.1"
+    }
+  },
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
@@ -11,6 +16,6 @@
     "@fontsource/ibm-plex-mono": "^5.2.5",
     "@fontsource/ibm-plex-sans": "^5.2.5",
     "@fontsource/space-grotesk": "^5.2.5",
-    "astro": "^5.7.0"
+    "astro": "^6.4.6"
   }
 }
