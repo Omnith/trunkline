@@ -37,3 +37,18 @@ jobs:
         run: npm install -g npm@latest # trusted publishing needs npm >= 11.5.1; node22 bundles 10.x
       - if: steps.guard.outputs.skip == 'false'
         run: npm publish --provenance --access public
+
+  verify:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Install published package from the live registry and run it
+        run: |
+          V=$(npm view trunkline version)
+          npm install -g "trunkline@$V"
+          trunkline --help

@@ -1,8 +1,13 @@
 name: ci
 on:
   push:
-    branches: [main, 'feat/**']
+    branches: [main]
+    tags: ['v*']
   pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # empty default: each job states the least privilege it needs
 permissions: {}
@@ -11,10 +16,11 @@ jobs:
   test:
     permissions:
       contents: read
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         node: [22, 24]
     runs-on: ${{ matrix.os }}
     steps:
@@ -38,6 +44,7 @@ jobs:
   docker:
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -74,7 +81,7 @@ jobs:
           echo "$out2" | grep -q "tl-invite-" || exit 1
           docker rm -f tl
       - name: Log in to GHCR
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -87,9 +94,10 @@ jobs:
           images: ghcr.io/omnith/trunkline
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
             type=sha,prefix=sha-
       - name: Build and push multiarch
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
