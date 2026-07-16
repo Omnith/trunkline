@@ -82,10 +82,8 @@ export class PhoneClient {
     return this.req('POST', '/api/calls', CallOutputSchema, input)
   }
   send(input: SendInput): Promise<SendOutput> {
-    return this.req('POST', `/api/calls/${input.threadId}/messages`, SendOutputSchema, {
-      body: input.body,
-      ackThrough: input.ackThrough,
-    })
+    // unified send: full input (threadId XOR to); core resolves the peer thread server-side
+    return this.req('POST', '/api/messages', SendOutputSchema, input)
   }
   inbox(waitMs = 0): Promise<ListenOutput> {
     return this.req('GET', `/api/inbox?waitMs=${waitMs}`, ListenOutputSchema)

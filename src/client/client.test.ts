@@ -63,6 +63,21 @@ describe('PhoneClient', () => {
     expect(after.messages).toEqual([]) // fails while PhoneClient drops ackThrough
   })
 
+  test('send by peer name resolves the thread server-side and lands in the peer inbox', async () => {
+    const h = makeService()
+    const url = await boot(h)
+    const gha = await registerAgent(url, { name: 'gha-docker-runner', inviteCode: invite(h) })
+    const vol = await registerAgent(url, { name: 'volumi', inviteCode: invite(h) })
+    const ghaClient = new PhoneClient({ url, token: gha.token })
+    const volClient = new PhoneClient({ url, token: vol.token })
+
+    await ghaClient.call({ to: 'volumi', subject: 'ci', body: 'first' })
+    await volClient.send({ to: 'gha-docker-runner', body: 'reply by name' })
+
+    const inbox = await ghaClient.inbox()
+    expect(inbox.messages.map((m) => m.body)).toEqual(['reply by name'])
+  })
+
   test('domain errors surface as ClientError with the server code', async () => {
     const h = makeService()
     const url = await boot(h)
