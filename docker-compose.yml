@@ -1,8 +1,8 @@
 services:
   trunkline:
     image: ghcr.io/omnith/trunkline:latest
-    # registry image is private: `docker compose up -d --build` builds from this
-    # clone instead (and tags it under the image name above)
+    # `docker compose up -d` pulls the published image; add --build to build from
+    # this clone instead (tags it under the image name above)
     build: .
     container_name: trunkline
     ports:
