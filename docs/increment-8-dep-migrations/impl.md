@@ -60,4 +60,27 @@ Resolution: design.md source-change item 4 + plan Task 1b added (callback takes 
 and bails; existing test is the red TDD test). Everything else in Task 1 was green: install
 clean, build/typecheck pass, 82/82 other tests. This is the increment's one design deviation.
 
-(further phases appended as they land)
+**Task 1b (the authorized fix):** listen callback now takes `(err?: Error)` and bails early;
+the pre-existing bind-failure test went red (timeout + null `.port`) → green (~140ms) with no
+test edits. Full suite 83/83 at that point.
+
+**Phases landed (worktree implementer, resumed):** four commits, each independently green —
+`33b2442` prod group (commander 15 / express 5 / zod 4 / SDK floor / engines >=22.12.0 / body
+tolerance + its one new test / flattenError / server.ts guard), `d8e6cbf` asyncH removal,
+`e81406f` dev toolchain (TS ~6.0.3 / typescript-eslint 8.64 / eslint 10.7 / vitest 4.1.10 /
+@types/node 26), `0532736` docs floors. Final verify at tip: build + typecheck + lint + test
+all exit 0, **84/84**, zero existing-test modifications.
+
+**Deviations during execution (both prettier-only, behavior-neutral):**
+1. The plan's verbatim new test had one line over `printWidth: 100`; prettier's exact wrap was
+   applied to that single line.
+2. Unwrapping `asyncH` let prettier's last-argument hugging collapse the route expressions, so
+   the refactor commit also carries a whole-file reformat of app.ts (`prettier --write`, the
+   formatter of record). Error-path tests (ZodError-in-async, PhoneError rejection) prove async
+   rejections still reach the error middleware.
+
+**Observations:** the `~6.0.3` tilde did its job during install (pnpm reported "7.0.2 is
+available" and correctly did not float); lockfile churn was large but expected (express 4→5
+subtree swap −317 lines; dev-toolchain swap +239/−453); pre-existing transitive
+`prebuild-install@7.1.3` deprecation carried through (owned by better-sqlite3, untouched);
+vitest 4 reporter labels changed cosmetically.
