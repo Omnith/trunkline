@@ -4,7 +4,7 @@ import express, {
   type RequestHandler,
   type Response,
 } from 'express'
-import { ZodError } from 'zod'
+import { flattenError, ZodError } from 'zod'
 import {
   AckInputSchema,
   CallInputSchema,
@@ -123,7 +123,8 @@ export function buildApp(deps: AppDeps): express.Express {
     '/agents/me',
     label('checkin'),
     asyncH(async (req, res) => {
-      const input = CheckinInputSchema.parse(req.body)
+      // express 5 leaves req.body undefined when no body was parsed; all fields optional here
+      const input = CheckinInputSchema.parse(req.body ?? {})
       res.json(await service.checkin({ agent: agentOf(res), surface: 'http' }, input))
     }),
   )
@@ -178,7 +179,8 @@ export function buildApp(deps: AppDeps): express.Express {
     label('hangup'),
     asyncH(async (req, res) => {
       const threadId = IdParamSchema.parse(req.params.id)
-      const body = HangupInputSchema.omit({ threadId: true }).parse(req.body)
+      // express 5 leaves req.body undefined when no body was parsed; all fields optional here
+      const body = HangupInputSchema.omit({ threadId: true }).parse(req.body ?? {})
       res.json(
         await service.hangup({ agent: agentOf(res), surface: 'http' }, { threadId, ...body }),
       )
@@ -225,7 +227,7 @@ export function buildApp(deps: AppDeps): express.Express {
     if (err instanceof ZodError) {
       boundaryEvent('VALIDATION_ERROR')
       res.status(422).json({
-        error: { code: 'VALIDATION_ERROR', message: 'invalid input', details: err.flatten() },
+        error: { code: 'VALIDATION_ERROR', message: 'invalid input', details: flattenError(err) },
       })
       return
     }

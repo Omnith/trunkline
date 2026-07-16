@@ -19,7 +19,10 @@ export function startServer(cfg: ServerConfig): Promise<RunningServer> {
   const service = new PhoneService(store, emitter, systemClock, cfg.threadTtlHours * HOUR_MS)
   const app = buildApp({ service, emitter, clock: systemClock, mcpHandler: handleMcpRequest })
   return new Promise((resolve, reject) => {
-    const srv = app.listen(cfg.port, cfg.bind, () => {
+    const srv = app.listen(cfg.port, cfg.bind, (err?: Error) => {
+      // express 5 registers this callback as an 'error' handler too; on bind failure
+      // bail here so the 'error' listener below settles the promise
+      if (err) return
       const port = (srv.address() as AddressInfo).port
       // graceful shutdown: release parked long-polls first so they respond empty, then close.
       // undici pools keep-alive sockets that srv.close() will not reap on its own, so keep
@@ -57,7 +60,7 @@ export function startServer(cfg: ServerConfig): Promise<RunningServer> {
         close: () => (closing ??= doClose()),
       })
     })
-    // bind failures (e.g. EADDRINUSE) fire 'error', never the listen callback
+    // bind failures (e.g. EADDRINUSE) fire 'error'; the callback above bails so this owns rejection
     srv.once('error', reject)
   })
 }
