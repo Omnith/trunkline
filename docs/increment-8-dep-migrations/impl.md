@@ -49,4 +49,15 @@ Plan-quality/test-strategy reviewer — findings and resolutions:
 
 ## Execution
 
-(appended as phases land)
+**Task 1 STOP-gate halt (worktree implementer, by design):** the prod-group bump left exactly
+one test red — `server.test.ts` bind-failure rejection (5s timeout + null `.port` TypeError).
+Root-caused from the installed express 5.2.1 source: `app.listen` now registers the listen
+callback as a `server.once('error', done)` handler (v4 fired it only on `'listening'`), so on
+EADDRINUSE our callback ran with an unbound socket, threw inside the emitter, and blocked our
+own `'error'` listener — the promise never settled. The implementer reported instead of
+patching (the design had claimed app.ts was the complete source-change set — it wasn't).
+Resolution: design.md source-change item 4 + plan Task 1b added (callback takes `(err?: Error)`
+and bails; existing test is the red TDD test). Everything else in Task 1 was green: install
+clean, build/typecheck pass, 82/82 other tests. This is the increment's one design deviation.
+
+(further phases appended as they land)

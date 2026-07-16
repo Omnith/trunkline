@@ -39,12 +39,18 @@ delta is validation-error message **text** inside an unchanged `err.flatten()`
 TS ≥5.5 (satisfied). Verdict: **zod 4 is drop-in; no SDK bump, no shim, no `zod/v4` subpath
 split.**
 
-**express 4→5** (inline analysis of `src/http/app.ts`): all routes are literal or plain `:id` —
-none of the path-to-regexp v8 breaking patterns. Error-middleware signature unchanged. Two
-behavior points to handle: (1) express 5 forwards async handler rejections natively, so the
-`asyncH` wrapper becomes dead weight; (2) in express 5 `req.body` is `undefined` (not `{}`)
-when no body parser matched, so a body-less POST to an all-optional-body endpoint (checkin,
-hangup) would flip from 200 to 422. The v5 default query-parser change ("extended"→"simple")
+**express 4→5** (inline analysis of `src/http/app.ts`, third point found empirically during
+implementation): all routes are literal or plain `:id` — none of the path-to-regexp v8 breaking
+patterns. Error-middleware signature unchanged. Three behavior points to handle: (1) express 5
+forwards async handler rejections natively, so the `asyncH` wrapper becomes dead weight;
+(2) in express 5 `req.body` is `undefined` (not `{}`) when no body parser matched, so a
+body-less POST to an all-optional-body endpoint (checkin, hangup) would flip from 200 to 422;
+(3) express 5's `app.listen` registers the listen callback as a `server.once('error', done)`
+handler too (v4 forwarded it only as the `'listening'` callback — proven from the installed
+express 5.2.1 source, `lib/application.js:598-606`), so on bind failure (EADDRINUSE) the
+callback in `src/http/server.ts` runs with an unbound socket: `srv.address()` is null, the
+`.port` read throws inside the emitter, and our own `'error'` listener never fires — the
+`startServer` promise hangs. The existing bind-failure behavior test catches this. The v5 default query-parser change ("extended"→"simple")
 is irrelevant to our flat query schemas; body-parser 2's `entity.too.large` shape is covered
 by the existing 413 test. The `/mcp` route was considered: valid MCP traffic always carries
 `content-type: application/json`, so `express.json()` parses it identically to v4; the only
@@ -87,7 +93,8 @@ Dockerfile needs nothing — `node:22-slim` floats to current 22.x (≥22.13).
 
 ## Source changes (the complete set)
 
-All in `src/http/app.ts`; zod, commander, and the MCP layer need **no source changes**.
+In `src/http/app.ts` and `src/http/server.ts` (item 4 — added when implementation Task 1
+surfaced it; see impl.md); zod, commander, and the MCP layer need **no source changes**.
 
 1. **Remove `asyncH`** (line 39) and unwrap its ~12 call sites — express 5 forwards async
    rejections to the error middleware natively. Keeping a redundant wrapper is exactly the
@@ -101,6 +108,12 @@ All in `src/http/app.ts`; zod, commander, and the MCP layer need **no source cha
 3. **Swap `err.flatten()` → `z.flattenError(err)`** in the 422 handler — same
    `{formErrors, fieldErrors}` output (probe-verified), but off the API zod 4 marks
    `@deprecated`. Cheap now; grows into a lint failure the day type-aware linting lands.
+4. **`src/http/server.ts`: guard the listen callback against express 5's bind-failure
+   invocation.** The callback takes `(err?: Error)` and bails when set, letting the existing
+   `srv.once('error', reject)` own rejection (it still fires — express's own error handler no
+   longer throws, so the emitter reaches ours). The stale "never the listen callback" comment
+   goes with it. Behavior contract unchanged: `startServer` rejects on bind failure, pinned by
+   the existing `server.test.ts` test — which is the red TDD test for this fix.
 
 ## Testing
 
