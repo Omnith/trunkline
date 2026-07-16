@@ -88,10 +88,13 @@ describe('send by peer (to)', () => {
 
   test('send with to reopens the most recently ended thread with that peer', async () => {
     const h = twoAgents()
+    const older = await h.service.call(gha, { to: 'volumi', subject: 'old', body: 'w' })
+    await h.service.hangup(gha, { threadId: older.thread.id })
+    h.clock.advance(1000)
     const t1 = await h.service.call(gha, { to: 'volumi', subject: 'a', body: 'x' })
     await h.service.hangup(gha, { threadId: t1.thread.id })
     const res = await h.service.send(gha, { to: 'volumi', body: 'late reply' })
-    expect(res.message.threadId).toBe(t1.thread.id)
+    expect(res.message.threadId).toBe(t1.thread.id) // most recent of the two ended
     const threads = await h.service.threads(gha, { status: 'open' })
     expect(threads.threads.map((t) => t.id)).toContain(t1.thread.id) // reopen-on-send
   })
