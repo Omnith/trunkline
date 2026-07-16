@@ -11,9 +11,10 @@ vitest 4, @types/node 26, typescript ~6.0.3) on `feat/ffl-8-dep-migrations`, sup
 Dependabot PRs, with the 83-test behavior suite passing unchanged plus one new tolerance test.
 
 **Architecture:** No architectural change. The only source edits are in `src/http/app.ts`
-(express-5 compat: drop `asyncH`, tolerate body-less POSTs, leave deprecated `.flatten()`).
-Contracts, core, MCP, CLI, store are untouched. See `design.md` for the evidence behind every
-version choice.
+(express-5 compat: drop `asyncH`, tolerate body-less POSTs, swap deprecated `.flatten()` for
+`flattenError`) and `src/http/server.ts` (express-5 compat: bind-failure listen-callback
+guard, Task 1b). Contracts, core, MCP, CLI, store are untouched. See `design.md` for the
+evidence behind every version choice.
 
 **Tech Stack:** pnpm 10.34.5 (invoke as `corepack pnpm …`), tsup, vitest, eslint flat config.
 
@@ -77,11 +78,49 @@ one empirical risk in this step; report the exact errors rather than casting aro
 - [ ] **Step 4: Run the suite — baseline under express 5 / zod 4 / commander 15**
 
 Run: `corepack pnpm test`
-Expected: **full suite green** (83 tests at time of writing — the gate is "all pass", not the
-integer). Every existing test sends JSON bodies with content-type, so the
-express-5 `req.body === undefined` change should not surface here. If ANY test fails, stop and
-root-cause per the header rule; failures outside body-less/`req.body` semantics are
-disqualifying evidence against the design and must be reported, not patched around.
+Expected: green EXCEPT exactly one known failure —
+`src/http/server.test.ts > startServer > rejects when the requested bind port is already in
+use` (5s timeout plus an unhandled `TypeError: Cannot read properties of null (reading
+'port')`). That is express 5's `app.listen` bind-failure change, fixed next in Task 1b. Every
+existing test sends JSON bodies with content-type, so the express-5 `req.body === undefined`
+change should not surface here. ANY other failure: stop and root-cause per the header rule —
+it is disqualifying evidence against the design and must be reported, not patched around.
+
+### Task 1b: Fix the express-5 bind-failure hang in startServer
+
+Express 5's `app.listen` registers the listen callback as an `'error'` handler too (design.md
+§express, point 3). The existing bind-failure test is the red TDD test for this task.
+
+**Files:**
+- Modify: `src/http/server.ts:22-23` (callback signature + guard), `src/http/server.ts:60`
+  (stale comment)
+
+- [ ] **Step 1: Confirm the red test fails for the documented reason**
+
+Run: `corepack pnpm vitest run src/http/server.test.ts -t "already in use"`
+Expected: FAIL — timeout + the null `.port` TypeError.
+
+- [ ] **Step 2: Apply the guard**
+
+```diff
+-    const srv = app.listen(cfg.port, cfg.bind, () => {
++    const srv = app.listen(cfg.port, cfg.bind, (err?: Error) => {
++      // express 5 registers this callback as an 'error' handler too; on bind failure
++      // bail here so the 'error' listener below settles the promise
++      if (err) return
+       const port = (srv.address() as AddressInfo).port
+```
+
+```diff
+-    // bind failures (e.g. EADDRINUSE) fire 'error', never the listen callback
++    // bind failures (e.g. EADDRINUSE) fire 'error'; the callback above bails so this owns rejection
+     srv.once('error', reject)
+```
+
+- [ ] **Step 3: Verify red → green, then the full suite**
+
+Run: `corepack pnpm vitest run src/http/server.test.ts -t "already in use"` → PASS
+Run: `corepack pnpm test` → full suite green (83 tests, no other change).
 
 *No commit yet — phase 1 commits at Task 4 (one green commit for bump + compat, one for the
 asyncH refactor).*
@@ -199,8 +238,8 @@ the installed dev toolchain in this phase).
 - [ ] **Step 2: Commit**
 
 ```bash
-git add package.json pnpm-lock.yaml src/http/app.ts src/http/app.test.ts
-git commit -m "build(deps): commander 15, express 5, zod 4 - prod group with express 5 body tolerance"
+git add package.json pnpm-lock.yaml src/http/app.ts src/http/app.test.ts src/http/server.ts
+git commit -m "build(deps): commander 15, express 5, zod 4 - prod group with express 5 compat"
 ```
 
 ### Task 5: Remove `asyncH` (behavior-neutral refactor)
