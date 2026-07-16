@@ -62,8 +62,11 @@ export const CallOutputSchema = z.object({
   message: MessageViewSchema.nullable(),
 })
 
+// STAYS a plain object (both threadId and to optional) so every .omit/.shape consumer keeps
+// compiling. The "exactly one of threadId/to" XOR is enforced once, in service.send.
 export const SendInputSchema = z.object({
-  threadId: z.number().int().positive(),
+  threadId: z.number().int().positive().optional(),
+  to: AgentNameSchema.optional(), // reply by peer name; resolved to a thread server-side
   body: MessageBodySchema,
   // piggyback ack: advance the sender's cursor through this id in the same round.
   // positive() is intentional — acking through 0 on a send is meaningless (ack's own min(0) is unchanged).

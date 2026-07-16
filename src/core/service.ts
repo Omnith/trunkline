@@ -226,7 +226,18 @@ export class PhoneService {
 
   send(ctx: CallCtx, input: SendInput): Promise<SendOutput> {
     return this.op('send', ctx.surface, ctx.agent, (ev) => {
-      const thread = this.requireParticipant(input.threadId, ctx.agent)
+      // the ONE enforcement point for every surface: a schema refine would be dropped by the
+      // MCP SDK's .shape re-wrap, so the threadId-XOR-to invariant lives here.
+      if ((input.threadId === undefined) === (input.to === undefined)) {
+        throw new PhoneError('VALIDATION_ERROR', 'pass exactly one of threadId or to')
+      }
+      if (input.to === ctx.agent) {
+        throw new PhoneError('VALIDATION_ERROR', 'cannot send to yourself')
+      }
+      const thread =
+        input.threadId !== undefined
+          ? this.requireParticipant(input.threadId, ctx.agent)
+          : this.resolvePeerThread(input.to as string, ctx.agent)
       const now = this.clock.now()
       const recipient = this.otherParticipant(thread, ctx.agent)
       const id = this.store.insertMessage({
@@ -388,6 +399,28 @@ export class PhoneService {
       kind: m.kind,
       createdAt: m.createdAt,
     }
+  }
+
+  // resolve a peer name to the thread a bare `send {to}` targets. TTL-aware like every read
+  // path (effectiveStatus); ambiguity guard preserved from the CLI contract. Relies on store
+  // ordering (lastActivityAt DESC, id DESC) — no re-sort, so mine[0] is the latest ended.
+  private resolvePeerThread(peer: string, agent: string): ThreadRecord {
+    const mine = this.store
+      .listThreadsFor(agent)
+      .filter((t) => t.participantA === peer || t.participantB === peer)
+    const open = mine.filter((t) => this.effectiveStatus(t) === 'open')
+    if (open.length > 1) {
+      const ids = open.map((t) => `#${t.id}`).join(', ')
+      throw new PhoneError(
+        'AMBIGUOUS_THREAD',
+        `multiple open threads with "${peer}" (${ids}) - pass threadId`,
+      )
+    }
+    const best = open[0] ?? mine[0] // latest ended wins when none are open
+    if (!best) {
+      throw new PhoneError('NOT_FOUND', `no thread with "${peer}" - open one with call`)
+    }
+    return best
   }
 
   private requireParticipant(threadId: number, agent: string): ThreadRecord {

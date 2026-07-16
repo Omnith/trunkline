@@ -133,7 +133,7 @@ describe('bodyFrom', () => {
 
 describe('sendTo', () => {
   test('resolves the open thread with the peer and sends into it', async () => {
-    const sent: Array<{ threadId: number; body: string }> = []
+    const sent: SendInput[] = []
     const client: SendToClient = {
       threads: () => Promise.resolve({ threads: [threadView(4, 'ci', 'open')] }),
       send: (input) => {
@@ -168,7 +168,7 @@ describe('sendTo', () => {
   })
 
   test('reaches an ended call when no open one exists (reopen-on-send)', async () => {
-    const sent: Array<{ threadId: number; body: string }> = []
+    const sent: SendInput[] = []
     const client: SendToClient = {
       threads: () => Promise.resolve({ threads: [threadView(7, 'done', 'ended')] }),
       send: (input) => {

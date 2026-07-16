@@ -75,6 +75,75 @@ describe('send', () => {
   })
 })
 
+describe('send by peer (to)', () => {
+  test('send with to resolves the open thread with that peer, ignoring other peers', async () => {
+    const h = twoAgents()
+    provision(h, 'bystander')
+    const other = await h.service.call(gha, { to: 'bystander', subject: 'noise', body: 'n' })
+    const { thread } = await h.service.call(gha, { to: 'volumi', subject: 's', body: 'm1' })
+    const res = await h.service.send(vol, { to: 'gha-docker-runner', body: 'reply' })
+    expect(res.message.threadId).toBe(thread.id)
+    expect(res.message.threadId).not.toBe(other.thread.id)
+  })
+
+  test('send with to reopens the most recently ended thread with that peer', async () => {
+    const h = twoAgents()
+    const t1 = await h.service.call(gha, { to: 'volumi', subject: 'a', body: 'x' })
+    await h.service.hangup(gha, { threadId: t1.thread.id })
+    const res = await h.service.send(gha, { to: 'volumi', body: 'late reply' })
+    expect(res.message.threadId).toBe(t1.thread.id)
+    const threads = await h.service.threads(gha, { status: 'open' })
+    expect(threads.threads.map((t) => t.id)).toContain(t1.thread.id) // reopen-on-send
+  })
+
+  test('send with to and multiple open threads with that peer is AMBIGUOUS_THREAD listing ids', async () => {
+    const h = twoAgents()
+    const a = await h.service.call(gha, { to: 'volumi', subject: 'a', body: 'x' })
+    const b = await h.service.call(gha, { to: 'volumi', subject: 'b', body: 'y' })
+    await expect(h.service.send(gha, { to: 'volumi', body: 'which?' })).rejects.toMatchObject({
+      code: 'AMBIGUOUS_THREAD',
+      message: expect.stringContaining(`#${a.thread.id}`),
+    })
+    void b
+  })
+
+  test('an open thread idle past the TTL does not count as open for resolution', async () => {
+    const h = twoAgents()
+    const stale = await h.service.call(gha, { to: 'volumi', subject: 'old', body: 'x' })
+    h.clock.advance(25 * 60 * 60 * 1000) // past the 24h TTL
+    const fresh = await h.service.call(gha, { to: 'volumi', subject: 'new', body: 'y' })
+    const res = await h.service.send(gha, { to: 'volumi', body: 'r' }) // NOT ambiguous
+    expect(res.message.threadId).toBe(fresh.thread.id)
+    void stale
+  })
+
+  test('send with to and no thread history is NOT_FOUND steering to call', async () => {
+    const h = twoAgents()
+    await expect(h.service.send(gha, { to: 'volumi', body: 'hi' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: expect.stringContaining('call'),
+    })
+  })
+
+  test('send to yourself is rejected', async () => {
+    const h = twoAgents()
+    await expect(
+      h.service.send(gha, { to: 'gha-docker-runner', body: 'hi me' }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
+  })
+
+  test('send requires exactly one of threadId and to (enforced in core, all surfaces)', async () => {
+    const h = twoAgents()
+    const { thread } = await h.service.call(gha, { to: 'volumi', subject: 's', body: 'm' })
+    await expect(h.service.send(gha, { body: 'x' })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    })
+    await expect(
+      h.service.send(gha, { threadId: thread.id, to: 'volumi', body: 'x' }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
+  })
+})
+
 describe('at-least-once delivery', () => {
   test('unacked messages are re-delivered until acked; ack stops redelivery', async () => {
     const h = twoAgents()
