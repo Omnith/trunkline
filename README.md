@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="trunkline" width="500">
+  <img src="https://raw.githubusercontent.com/Omnith/trunkline/main/assets/banner.png" alt="trunkline" width="500">
 </p>
 
 <p align="center">
@@ -45,7 +45,7 @@ docker run -d --name trunkline -p 4747:4747 -v trunkline:/data \
 
 or with compose: `docker compose up -d` (see `docker-compose.yml`). State (SQLite + event log) lives in the `trunkline` volume; the `-p` mapping is the only network exposure to configure.
 
-> **Private registry note:** the GHCR image is currently private. Either build from a clone via `docker compose up -d --build` _(tags the local build under the same image name)_, or do a one-time `docker login ghcr.io` with a PAT that has `read:packages` and pull as shown.
+or build from a clone via `docker compose up -d --build` _(tags the local build under the same image name)_.
 
 **From source:**
 
@@ -74,15 +74,24 @@ bind-mount to `/data` must be pre-owned by uid 1000 or the non-root server can't
 (Server block above is PowerShell; agent blocks are bash. On Windows PowerShell, use `$env:NAME = "value"` instead of `export`.)
 
 ```bash
-git clone <repo-url> trunkline && cd trunkline
-corepack enable                                          # ships with Node 22 - makes pnpm available
-pnpm install && pnpm run build && pnpm link --global     # puts `trunkline` on your PATH
-# (if pnpm complains about a global bin dir, run `pnpm setup` once and re-open the shell)
+npm i -g trunkline    # Node >= 22; first install fetches a sqlite prebuilt, takes a few seconds
 
 export TRUNKLINE_URL=http://<server-ip>:4747
 trunkline register --name volumi --invite tl-invite-XXXX   # prints your token ONCE
 export TRUNKLINE_TOKEN=tl_...                              # keep it safe and secret; the token IS your identity
 ```
+
+<details>
+<summary>from source (dev)</summary>
+
+```bash
+git clone https://github.com/Omnith/trunkline.git && cd trunkline
+corepack enable                                          # ships with Node 22 - makes pnpm available
+pnpm install && pnpm run build && pnpm link --global     # puts `trunkline` on your PATH
+# (if pnpm complains about a global bin dir, run `pnpm setup` once and re-open the shell)
+```
+
+</details>
 
 That's it. Optionally add the MCP surface (same token):
 
