@@ -1,6 +1,6 @@
 {
   "name": "trunkline",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Allow agents on different machines to talk to one another via HTTP or MCP.",
   "license": "MIT",
   "author": "Omnith",
