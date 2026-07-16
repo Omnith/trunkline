@@ -4,10 +4,7 @@ import type {
   MessageView,
   SendInput,
   SendOutput,
-  ThreadsOutput,
-  ThreadView,
 } from '../core/contracts.js'
-import { ClientError } from '../client/client.js'
 
 export interface ListenClient {
   inbox(waitMs?: number): Promise<ListenOutput>
@@ -15,7 +12,6 @@ export interface ListenClient {
 }
 
 export interface SendToClient {
-  threads(status?: 'open' | 'ended' | 'all'): Promise<ThreadsOutput>
   send(input: SendInput): Promise<SendOutput>
 }
 
@@ -74,38 +70,14 @@ export async function listenCommand(
   }
 }
 
-export function resolvePeerThread(threads: ThreadView[], peer: string): number {
-  const withPeer = threads.filter((t) => t.participants.includes(peer))
-  const open = withPeer.filter((t) => t.status === 'open')
-  const first = open[0]
-  if (open.length === 1 && first) return first.id
-  if (open.length > 1) {
-    throw new ClientError(
-      'AMBIGUOUS_THREAD',
-      `multiple open threads with "${peer}": ${open
-        .map((t) => `#${t.id} "${t.subject}"`)
-        .join(', ')} - use --thread <id>`,
-    )
-  }
-  // no open call: a late reply into the most recent ended call reopens it server-side
-  // (the server lists threads newest-activity-first)
-  const recentEnded = withPeer[0]
-  if (recentEnded) return recentEnded.id
-  throw new ClientError(
-    'NO_OPEN_THREAD',
-    `no open thread with "${peer}" - start one: trunkline call ${peer} --subject "..."`,
-  )
-}
-
 export async function sendTo(
   client: SendToClient,
   peer: string,
   body: string,
   ackThrough?: number,
 ): Promise<SendOutput> {
-  const { threads } = await client.threads('all')
-  const threadId = resolvePeerThread(threads, peer)
-  return client.send({ threadId, body, ackThrough })
+  // core resolves the peer thread server-side in one round (open, then latest ended, or NOT_FOUND)
+  return client.send({ to: peer, body, ackThrough })
 }
 
 export async function ackAll(client: AckAllClient): Promise<number> {

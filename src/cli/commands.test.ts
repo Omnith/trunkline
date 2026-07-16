@@ -1,11 +1,10 @@
 import { describe, expect, test } from 'vitest'
-import type { ListenOutput, MessageView, SendInput, ThreadView } from '../core/contracts.js'
+import type { ListenOutput, MessageView, SendInput } from '../core/contracts.js'
 import {
   ackAll,
   bodyFrom,
   exitCodeFor,
   listenCommand,
-  resolvePeerThread,
   sendTo,
   type AckAllClient,
   type ListenClient,
@@ -20,49 +19,6 @@ const msg = (id: number, body: string): MessageView => ({
   body,
   kind: 'message',
   createdAt: 1000,
-})
-
-const threadView = (
-  id: number,
-  subject: string,
-  status: 'open' | 'ended',
-  participants: [string, string] = ['gha-docker-runner', 'volumi'],
-): ThreadView => ({
-  id,
-  subject,
-  participants,
-  openedBy: participants[0],
-  status,
-  endedBy: null,
-  endNote: null,
-  openedAt: 1000,
-  lastActivityAt: 1000,
-})
-
-describe('resolvePeerThread', () => {
-  test('resolves the single open thread with the peer, excluding other peers', () => {
-    const threads = [
-      threadView(1, 'ci', 'open'),
-      threadView(2, 'old', 'ended'),
-      threadView(3, 'other-peer', 'open', ['gha-docker-runner', 'lab7']),
-    ]
-    expect(resolvePeerThread(threads, 'volumi')).toBe(1)
-  })
-  test('errors helpfully when there is no open thread', () => {
-    expect(() => resolvePeerThread([], 'volumi')).toThrow(/trunkline call volumi/)
-  })
-  test('errors listing candidates when ambiguous', () => {
-    const threads = [threadView(1, 'ci', 'open'), threadView(2, 'infra', 'open')]
-    expect(() => resolvePeerThread(threads, 'volumi')).toThrow(/#1.*#2/s)
-  })
-  test('falls back to the most recent ended thread when no open call exists (late reply reopens)', () => {
-    const threads = [
-      threadView(9, 'newest-ended', 'ended'),
-      threadView(4, 'older-ended', 'ended'),
-      threadView(3, 'other-peer-open', 'open', ['gha-docker-runner', 'lab7']),
-    ]
-    expect(resolvePeerThread(threads, 'volumi')).toBe(9)
-  })
 })
 
 describe('listenCommand', () => {
@@ -132,52 +88,30 @@ describe('bodyFrom', () => {
 })
 
 describe('sendTo', () => {
-  test('resolves the open thread with the peer and sends into it', async () => {
+  // core resolves the peer thread server-side now; sendTo just forwards the peer name.
+  test('forwards the peer name and body to send', async () => {
     const sent: SendInput[] = []
     const client: SendToClient = {
-      threads: () => Promise.resolve({ threads: [threadView(4, 'ci', 'open')] }),
       send: (input) => {
         sent.push(input)
         return Promise.resolve({ message: msg(9, input.body) })
       },
     }
     const out = await sendTo(client, 'volumi', 'hello there')
-    expect(sent).toEqual([{ threadId: 4, body: 'hello there' }])
+    expect(sent).toEqual([{ to: 'volumi', body: 'hello there' }])
     expect(out.message.id).toBe(9)
   })
 
-  test('forwards ackThrough to send when given (reply+ack in one round)', async () => {
+  test('forwards ackThrough when given (reply+ack in one round)', async () => {
     const sent: SendInput[] = []
     const client: SendToClient = {
-      threads: () => Promise.resolve({ threads: [threadView(4, 'ci', 'open')] }),
       send: (input) => {
         sent.push(input)
         return Promise.resolve({ message: msg(9, input.body) })
       },
     }
     await sendTo(client, 'volumi', 'hi', 7)
-    expect(sent).toEqual([{ threadId: 4, body: 'hi', ackThrough: 7 }])
-  })
-
-  test('propagates resolution errors (no thread at all)', async () => {
-    const client: SendToClient = {
-      threads: () => Promise.resolve({ threads: [] }),
-      send: () => Promise.reject(new Error('should not send')),
-    }
-    await expect(sendTo(client, 'volumi', 'x')).rejects.toThrow(/no open thread/)
-  })
-
-  test('reaches an ended call when no open one exists (reopen-on-send)', async () => {
-    const sent: SendInput[] = []
-    const client: SendToClient = {
-      threads: () => Promise.resolve({ threads: [threadView(7, 'done', 'ended')] }),
-      send: (input) => {
-        sent.push(input)
-        return Promise.resolve({ message: msg(11, input.body) })
-      },
-    }
-    await sendTo(client, 'volumi', 'one more thing')
-    expect(sent).toEqual([{ threadId: 7, body: 'one more thing' }])
+    expect(sent).toEqual([{ to: 'volumi', body: 'hi', ackThrough: 7 }])
   })
 })
 

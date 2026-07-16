@@ -134,6 +134,30 @@ describe('http surface', () => {
     expect(await asJson(res)).toMatchObject({ error: { code: 'NOT_FOUND' } })
   })
 
+  test('POST /api/calls/:id/messages sends into the path thread (201) and delivers', async () => {
+    const h = makeService()
+    const ghaToken = provision(h, 'gha-docker-runner')
+    const volToken = provision(h, 'volumi')
+    const base = await boot(h)
+    const auth = (t: string) => ({ authorization: `Bearer ${t}` })
+    const call = await fetch(`${base}/api/calls`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth(ghaToken) },
+      body: JSON.stringify({ to: 'volumi', subject: 'ci', body: 'first' }),
+    })
+    const { thread } = (await asJson(call)) as { thread: { id: number } }
+    const sent = await fetch(`${base}/api/calls/${thread.id}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth(volToken) },
+      body: JSON.stringify({ body: 'reply' }),
+    })
+    expect(sent.status).toBe(201)
+    const inbox = (await asJson(await fetch(`${base}/api/inbox`, { headers: auth(ghaToken) }))) as {
+      messages: Array<{ body: string }>
+    }
+    expect(inbox.messages.map((m) => m.body)).toEqual(['reply'])
+  })
+
   test('GET /api/inbox long-polls until a message lands', async () => {
     const h = makeService()
     const ghaToken = provision(h, 'gha-docker-runner')

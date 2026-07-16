@@ -144,11 +144,21 @@ export function buildApp(deps: AppDeps): express.Express {
     }),
   )
   api.post(
+    '/messages',
+    label('send'),
+    asyncH(async (req, res) => {
+      // unified send entry: full input, XOR/self-send enforced in core (surfaces as VALIDATION_ERROR)
+      const input = SendInputSchema.parse(req.body)
+      res.status(201).json(await service.send({ agent: agentOf(res), surface: 'http' }, input))
+    }),
+  )
+  api.post(
     '/calls/:id/messages',
     label('send'),
     asyncH(async (req, res) => {
       const threadId = IdParamSchema.parse(req.params.id)
-      const body = SendInputSchema.omit({ threadId: true }).parse(req.body)
+      // path threadId is authoritative; a stray body `to` is stripped like any unknown key
+      const body = SendInputSchema.omit({ threadId: true, to: true }).parse(req.body)
       res
         .status(201)
         .json(await service.send({ agent: agentOf(res), surface: 'http' }, { threadId, ...body }))
