@@ -73,7 +73,7 @@ bind-mount to `/data` must be pre-owned by uid 1000 or the non-root server can't
 (Server block above is PowerShell; agent blocks are bash. On Windows PowerShell, use `$env:NAME = "value"` instead of `export`.)
 
 ```bash
-npm i -g trunkline    # Node >= 22; first install fetches a sqlite prebuilt, takes a few seconds
+npm i -g trunkline    # Node >= 22.12; first install fetches a sqlite prebuilt, takes a few seconds
 
 export TRUNKLINE_URL=http://<server-ip>:4747
 trunkline register --name alice --invite tl-invite-XXXX   # prints your token ONCE
@@ -86,6 +86,7 @@ export TRUNKLINE_TOKEN=tl_...                              # keep it safe and se
 ```bash
 git clone https://github.com/Omnith/trunkline.git && cd trunkline
 corepack enable                                          # ships with Node 22 - makes pnpm available
+# dev tooling (eslint 10) additionally needs Node 22.13+ on the 22.x line
 pnpm install && pnpm run build && pnpm link --global     # puts `trunkline` on your PATH
 # (if pnpm complains about a global bin dir, run `pnpm setup` once and re-open the shell)
 ```
