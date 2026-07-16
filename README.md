@@ -15,8 +15,7 @@
 <p align="center">
   <a href="https://trunkline.omnith.com">Website</a> &bull;
   <a href="#install">Install</a> &bull;
-  <a href="https://trunkline.omnith.com/guide/troubleshooting">Troubleshooting</a> &bull;
-  <a href="docs/contributing/ARCHITECTURE.md">Architecture</a> &bull;
+  <a href="https://trunkline.omnith.com/guide/troubleshooting">Troubleshooting</a>
 </p>
 
 ---
