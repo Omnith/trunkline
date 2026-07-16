@@ -55,7 +55,7 @@ const textOf = (result: ToolCallResult): string => {
 }
 
 describe('mcp surface', () => {
-  test('lists the ten verbs as tools, with listen defaulting waitMs to 25s', async () => {
+  test('lists the eleven verbs, read tools carry readOnlyHint, listen defaults waitMs to 25s', async () => {
     const { url, ghaToken } = await boot()
     const client = await connect(url, ghaToken)
     const tools = (await client.listTools()).tools
@@ -70,9 +70,14 @@ describe('mcp surface', () => {
         'listen',
         'phonebook',
         'send',
+        'snapshot',
         'threads',
       ].sort(),
     )
+    // read-only tools advertise it so annotation-honoring harnesses can skip the prompt
+    for (const name of ['phonebook', 'inbox', 'history', 'threads', 'snapshot']) {
+      expect(tools.find((t) => t.name === name)?.annotations?.readOnlyHint).toBe(true)
+    }
     const listen = tools.find((t) => t.name === 'listen')
     // assert the 25s default is published at its precise JSON-schema location
     const waitMsSchema = (
@@ -80,6 +85,52 @@ describe('mcp surface', () => {
     )?.properties?.waitMs
     expect(waitMsSchema?.default).toBe(25000)
     await client.close()
+  })
+
+  test('server instructions carry the operating manual', async () => {
+    const { url, ghaToken } = await boot()
+    const client = await connect(url, ghaToken)
+    expect(client.getInstructions()).toContain('listen WAITS')
+    await client.close()
+  })
+
+  test('snapshot returns agents, threads, messages, and cursor in one call', async () => {
+    const { url, ghaToken } = await boot()
+    const gha = await connect(url, ghaToken)
+    const snap = JSON.parse(
+      textOf(await gha.callTool({ name: 'snapshot', arguments: {} })),
+    ) as Record<string, unknown>
+    expect(Object.keys(snap).sort()).toEqual(['agents', 'cursor', 'messages', 'threads'])
+    await gha.close()
+  })
+
+  test('listen {ack:true} delivers and acks so the inbox empties', async () => {
+    const { url, ghaToken, volToken } = await boot()
+    const gha = await connect(url, ghaToken)
+    const vol = await connect(url, volToken)
+    await gha.callTool({ name: 'call', arguments: { to: 'volumi', subject: 's', body: 'seed' } })
+    const got = await vol.callTool({ name: 'listen', arguments: { waitMs: 0, ack: true } })
+    expect(textOf(got)).toContain('seed')
+    const box = JSON.parse(textOf(await vol.callTool({ name: 'inbox', arguments: {} }))) as {
+      messages: unknown[]
+    }
+    expect(box.messages).toEqual([])
+    await gha.close()
+    await vol.close()
+  })
+
+  test('listen without ack leaves messages unacked in the inbox', async () => {
+    const { url, ghaToken, volToken } = await boot()
+    const gha = await connect(url, ghaToken)
+    const vol = await connect(url, volToken)
+    await gha.callTool({ name: 'call', arguments: { to: 'volumi', subject: 's', body: 'seed' } })
+    await vol.callTool({ name: 'listen', arguments: { waitMs: 0 } })
+    const box = JSON.parse(textOf(await vol.callTool({ name: 'inbox', arguments: {} }))) as {
+      messages: Array<{ body: string }>
+    }
+    expect(box.messages.map((m) => m.body)).toContain('seed')
+    await gha.close()
+    await vol.close()
   })
 
   test('call, send, and listen round-trip across two mcp clients', async () => {
