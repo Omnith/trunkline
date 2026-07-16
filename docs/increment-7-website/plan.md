@@ -18,8 +18,16 @@
 - `src/styles/global.css`: tokens, base type scale (Space Grotesk headings / Plex Sans
   body / Plex Mono code), plate/eyebrow component, code-block styling, focus-visible rings,
   reduced-motion guard.
-- Root `.gitignore`: `site/dist/`, `site/node_modules/` (verify existing patterns first).
-- Gate: `pnpm install && pnpm build` inside `site/` succeeds.
+- **Isolation set (plan-gate rev 2, blocking):** `eslint.config.js` ignores gains `'site/**'`
+  (flat-config patterns are anchored — root `eslint .` would otherwise lint site sources
+  under strict rules); `.prettierignore` gains `site/` (root prettier must not govern site
+  formatting); `.dockerignore` gains `site` (dockerignore patterns are root-anchored —
+  `site/node_modules` would otherwise ship to the daemon and churn the `COPY . .` cache).
+  Root `.gitignore` needs NO new lines (existing any-level `dist/`/`node_modules/` cover
+  site's — verified by the gate reviewer). `site/package.json` omits `packageManager`
+  (corepack walks up to the root pin; lockfile generated with pnpm 10.34.5).
+- Gate: `pnpm install && pnpm build` inside `site/` succeeds; root `npx eslint .` and
+  `npx prettier --check .` stay clean with site/ present.
 - Commit: `feat(site): astro scaffold - night-switchboard token system, themed layout`
 
 ### Task 2: pages
@@ -32,17 +40,22 @@
   every command cross-checked against the published 0.1.0 behavior (AC3). No invented
   flags, no marketing filler.
 - Gate: build + link check (`node` script over `site/dist` asserting every internal href
-  resolves to an emitted file) + AC6 screenshots (astro preview + user approval via
-  companion/preview URL).
+  resolves to an emitted file) + **external-origin grep** (no `http(s)://` origins in emitted
+  html/css beyond trunkline.omnith.com/github/npm links — fonts must be self-hosted; AC1)
+  + AC6 screenshots incl. a mobile-viewport shot (astro preview + user approval).
 - Commit: `feat(site): landing and starter guides - install, agents, troubleshooting, 404`
 
 ### Task 3: deploy workflow + domain
 
-- `.github/workflows/pages.yml`: on push main (paths `site/**`) + workflow_dispatch;
-  build job (corepack, pnpm install --frozen-lockfile in site/, astro build,
-  actions/configure-pages + actions/upload-pages-artifact); deploy job
-  (actions/deploy-pages, environment github-pages, `permissions: pages: write,
-  id-token: write`). ALL actions GitHub-owned and SHA-pinned (resolve via
+- `.github/workflows/pages.yml`: on push main (paths `site/**` AND
+  `.github/workflows/pages.yml` itself) + workflow_dispatch;
+  `concurrency: { group: pages, cancel-in-progress: false }` (let in-flight Pages deploys
+  finish — GitHub's own template default); build job (`permissions: contents: read`,
+  corepack, pnpm install --frozen-lockfile in site/, astro build,
+  actions/upload-pages-artifact — NO configure-pages: Astro's `site:` + base `/` make it
+  redundant and it would need pages scope); deploy job (actions/deploy-pages, environment
+  github-pages with `url: ${{ steps.deployment.outputs.page_url }}`, `permissions:
+  pages: write, id-token: write`). ALL actions GitHub-owned and SHA-pinned (resolve via
   `gh api repos/actions/<name>/git/ref/tags/<vN>` like ci.yml's pins). Top-level
   `permissions: {}`; timeout-minutes on both jobs.
 - `site/public/CNAME` = `trunkline.omnith.com`.
@@ -53,8 +66,15 @@
   enforce-HTTPS toggle once the cert issues.
 - Commit: `ci(pages): github pages deploy for site/ with custom domain`
 
-### Task 4: PR + verify
+### Task 4: holistic review + PR + verify
 
-- Full repo gates still green (`pnpm test` at root untouched by site/ — verify).
-- PR, CI green, merge `--rebase`; watch the pages run deploy; record deployment status +
-  the domain state in impl.md; update the volumi voicemail? No — not phone-relevant. Done.
+- FULL root gates with site/ present: `pnpm run build && pnpm run typecheck && pnpm run
+  lint && pnpm test` — lint is the one site/ could regress (plan-gate H2); confirm clean.
+- **Post-build holistic review (dispatched subagent — the checkpoint replacing the skipped
+  per-task reviews, plan-gate M6):** scope = (a) AC3 content accuracy: every command,
+  env var, exit code on the site cross-checked against cli/commands.ts, core/config.ts,
+  mcp/tools.ts as published in 0.1.0; (b) AC1 external-origin grep re-run; (c) pages.yml:
+  pins resolve to GitHub-owned refs, least-privilege, concurrency present; (d) isolation
+  checks (root lint/docker context/npm tarball unaffected). Fix HIGH/MEDIUM before PR.
+- PR, CI green, merge `--rebase`; watch the pages run deploy; record deployment id +
+  page_url in impl.md; user-side DNS handoff. Done.
