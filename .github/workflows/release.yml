@@ -1,7 +1,8 @@
 name: release
 on:
-  release:
-    types: [published]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions: {}
 
@@ -22,5 +23,17 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck && pnpm run lint && pnpm test
-      - run: npm install -g npm@latest # trusted publishing needs npm >= 11.5.1; node22 bundles 10.x
-      - run: npm publish --provenance --access public
+      - name: Skip if this version is already on npm (idempotent re-runs)
+        id: guard
+        run: |
+          V=$(node -p "require('./package.json').version")
+          if npm view "trunkline@$V" version >/dev/null 2>&1; then
+            echo "already published trunkline@$V - skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.guard.outputs.skip == 'false'
+        run: npm install -g npm@latest # trusted publishing needs npm >= 11.5.1; node22 bundles 10.x
+      - if: steps.guard.outputs.skip == 'false'
+        run: npm publish --provenance --access public
