@@ -1,0 +1,70 @@
+---
+import '@fontsource/space-grotesk/500.css'
+import '@fontsource/space-grotesk/700.css'
+import '@fontsource/ibm-plex-sans/400.css'
+import '@fontsource/ibm-plex-sans/500.css'
+import '@fontsource/ibm-plex-mono/400.css'
+import '@fontsource/ibm-plex-mono/500.css'
+import '../styles/global.css'
+
+interface Props {
+  title: string
+  description: string
+}
+const { title, description } = Astro.props
+const canonical = new URL(Astro.url.pathname, Astro.site)
+const FAVICON =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#1a1510"/><g fill="#e0834a"><circle cx="9" cy="13" r="2.4"/><circle cx="16" cy="10" r="2.4"/><circle cx="23" cy="13" r="2.4"/><circle cx="7" cy="20" r="2.4"/><circle cx="12" cy="22" r="2.4"/><circle cx="20" cy="22" r="2.4"/><circle cx="25" cy="20" r="2.4"/></g></svg>',
+  )
+---
+
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href={FAVICON} />
+    <script is:inline>
+      // pre-paint theme: stored choice > system preference > dark
+      const stored = localStorage.getItem('trunkline-theme')
+      const system = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+      document.documentElement.dataset.theme = stored === 'light' || stored === 'dark' ? stored : system
+    </script>
+  </head>
+  <body>
+    <nav class="nav">
+      <div class="nav-inner">
+        <a class="brand" href="/">trunkline</a>
+        <a href="/guide/install/">Docs</a>
+        <a href="https://github.com/Omnith/trunkline">GitHub</a>
+        <a href="https://www.npmjs.com/package/trunkline">npm</a>
+        <span class="right">
+          <span class="ver">v0.1.0</span>
+          <button class="toggle" id="theme-toggle" aria-label="Switch between dark and light theme"
+          ></button>
+        </span>
+      </div>
+    </nav>
+    <slot />
+    <footer class="footer">
+      <div class="footer-inner">
+        <span>trunkline · MIT · Omnith</span>
+        <a href="https://github.com/Omnith/trunkline">source</a>
+        <a href="https://www.npmjs.com/package/trunkline">package</a>
+        <a href="https://github.com/Omnith/trunkline/issues">issues</a>
+      </div>
+    </footer>
+    <script is:inline>
+      document.getElementById('theme-toggle').addEventListener('click', () => {
+        const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'
+        document.documentElement.dataset.theme = next
+        localStorage.setItem('trunkline-theme', next)
+      })
+    </script>
+  </body>
+</html>

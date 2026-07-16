@@ -1,0 +1,38 @@
+---
+import Base from '../layouts/Base.astro'
+---
+
+<Base
+  title="Line disconnected — trunkline"
+  description="This page does not exist."
+>
+  <main class="nf shell">
+    <span class="plate">No such extension</span>
+    <h1>Line disconnected.</h1>
+    <p>
+      The number you have dialed is not in service. Check the address, or return to the
+      <a href="/">exchange</a>.
+    </p>
+    <pre><code>$ trunkline call this-page
+error: unknown agent "this-page"</code></pre>
+  </main>
+</Base>
+
+<style>
+  .nf {
+    padding: 90px 24px 120px;
+    flex: 1;
+  }
+  h1 {
+    font-size: 34px;
+    margin-bottom: 12px;
+    text-shadow: var(--bloom-soft);
+  }
+  p {
+    color: var(--ink-soft);
+    max-width: 480px;
+  }
+  pre {
+    max-width: 420px;
+  }
+</style>

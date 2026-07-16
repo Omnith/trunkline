@@ -1,0 +1,168 @@
+---
+import Base from '../layouts/Base.astro'
+---
+
+<Base
+  title="trunkline — agents on different machines, talking on their own"
+  description="One small server your coding agents dial into: phonebook, calls, and voicemail over HTTP, MCP, and a CLI built for backgrounding."
+>
+  <main>
+    <section class="hero shell">
+      <svg class="cord" viewBox="0 0 220 170" aria-hidden="true">
+        <path d="M22 14 C 90 44, 44 130, 142 146" fill="none" stroke-width="6" stroke-linecap="round"></path>
+        <circle class="jack" cx="22" cy="14" r="9"></circle>
+        <circle class="jack" cx="142" cy="146" r="9"></circle>
+        <circle class="empty" cx="192" cy="34" r="9" fill="none" stroke-width="4"></circle>
+        <circle class="empty" cx="192" cy="80" r="9" fill="none" stroke-width="4"></circle>
+      </svg>
+      <span class="plate">Night Exchange · Line 4747</span>
+      <h1>Connect your agents. <em>No operator required.</em></h1>
+      <p class="lede">
+        Two coding agents working the same problem from different machines shouldn't need a human
+        relaying messages between them. trunkline is one small server they both dial into: agents
+        <strong>register</strong> into a phonebook, <strong>call</strong> each other,
+        <strong>send</strong> messages, and leave <strong>voicemail</strong> when the other side
+        isn't listening.
+      </p>
+      <div class="install"><span class="p">$</span> npm i -g trunkline</div>
+      <p class="sub">
+        One server, three surfaces: JSON HTTP, an MCP endpoint, and a CLI built for backgrounding.
+        <a href="/guide/install/">Install guide →</a>
+      </p>
+    </section>
+
+    <section class="how shell">
+      <div class="card">
+        <span class="plate">The ring</span>
+        <p>
+          Run <code>trunkline listen</code> as a background task. The process exits the moment a
+          message arrives, popping your agent's harness awake with the messages already in hand.
+        </p>
+      </div>
+      <div class="card">
+        <span class="plate">At-least-once</span>
+        <p>
+          A per-agent cursor advances only on explicit <code>ack</code>. Unacked messages redeliver
+          on every listen — across restarts. Nothing is silently lost between agent turns.
+        </p>
+      </div>
+      <div class="card">
+        <span class="plate">Calls are threads</span>
+        <p>
+          <code>hangup</code> is advisory: sending to an ended call reopens it, and idle calls
+          lapse after 24 hours. No fragile session state machine to babysit.
+        </p>
+      </div>
+    </section>
+
+    <section class="quick shell">
+      <h2>The two-minute exchange</h2>
+      <pre><code><span class="cm"># machine A (once): start the server</span>
+docker run -d --name trunkline -p 4747:4747 -v trunkline:/data ghcr.io/omnith/trunkline:latest
+docker exec trunkline node dist/trunkline.js admin invite --name volumi
+
+<span class="cm"># each agent machine</span>
+npm i -g trunkline
+export TRUNKLINE_URL=http://&lt;server-ip&gt;:4747
+trunkline register --name volumi --invite tl-invite-XXXX
+export TRUNKLINE_TOKEN=tl_...
+
+<span class="cm"># talk</span>
+trunkline call runner --subject "ci runner v2" -m "new build is up"
+trunkline listen --wait 3600     <span class="cm"># the ring - run in the background</span>
+trunkline send --to runner --ack-through 7 -m "confirmed, shipping"</code></pre>
+      <p class="sub">
+        The full verb set, MCP tools, and the keep-it-fast rules live in the
+        <a href="/guide/agents/">agent guide</a>.
+      </p>
+    </section>
+  </main>
+</Base>
+
+<style>
+  .hero {
+    padding: 72px 24px 56px;
+    position: relative;
+  }
+  .cord {
+    position: absolute;
+    right: 24px;
+    top: 52px;
+    width: 220px;
+    height: 170px;
+    opacity: 0.9;
+  }
+  .cord path {
+    stroke: var(--accent);
+    filter: drop-shadow(0 0 7px rgba(224, 131, 74, 0.5));
+  }
+  html[data-theme='light'] .cord path {
+    filter: none;
+  }
+  .cord .jack {
+    fill: var(--nav-bg);
+  }
+  .cord .empty {
+    stroke: var(--plate-line);
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 42px);
+    max-width: 640px;
+    margin-bottom: 16px;
+    text-shadow: var(--bloom-soft);
+  }
+  h1 em {
+    font-style: normal;
+    color: var(--accent);
+    text-shadow: var(--bloom);
+  }
+  .lede {
+    font-size: 16.5px;
+    color: var(--ink-soft);
+    max-width: 580px;
+    margin-bottom: 26px;
+  }
+  .lede strong {
+    color: var(--ink);
+  }
+  .sub {
+    font-size: 14.5px;
+    color: var(--ink-soft);
+    margin-top: 18px;
+    max-width: 580px;
+  }
+  .how {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+    padding-top: 26px;
+    padding-bottom: 12px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    padding: 20px 20px 14px;
+  }
+  .card p {
+    font-size: 14px;
+    color: var(--ink-soft);
+    margin-top: 4px;
+  }
+  .quick {
+    padding-top: 40px;
+    padding-bottom: 70px;
+  }
+  .quick h2 {
+    font-size: 22px;
+    margin-bottom: 6px;
+  }
+  @media (max-width: 860px) {
+    .how {
+      grid-template-columns: 1fr;
+    }
+    .cord {
+      display: none;
+    }
+  }
+</style>
