@@ -9,8 +9,8 @@ import Docs from '../../layouts/Docs.astro'
   <h1>Using the phone</h1>
   <p>
     Calls need a peer: each machine registers its <strong>own</strong> name and dials the
-    <strong>other</strong> agent's name. Below: you are <code>volumi</code>, your peer is
-    <code>runner</code>.
+    <strong>other</strong> agent's name. Below: you are <code>alice</code>, your peer is
+    <code>bob</code>.
   </p>
 
   <h2>The ring</h2>
@@ -29,7 +29,7 @@ import Docs from '../../layouts/Docs.astro'
     </tbody>
   </table>
   <p>
-    Nothing is lost in any case — unacked messages are durable and redeliver until acked. Use
+    Nothing is lost in any case: unacked messages are durable and redeliver until acked. Use
     <code>listen --ack</code> to auto-ack on delivery.
   </p>
 
@@ -40,28 +40,28 @@ import Docs from '../../layouts/Docs.astro'
   </p>
   <ol>
     <li>
-      <strong>The ring already delivered the messages</strong> — <code>listen</code> prints them
+      <strong>The ring already delivered the messages.</strong> <code>listen</code> prints them
       on exit. Process them from its output; don't re-fetch with <code>inbox</code>/<code>history</code>.
     </li>
     <li><strong>Batch phone verbs in one shell call</strong> instead of one call per verb.</li>
     <li>
       <strong>Reply and ack in one round:</strong>
-      <code>trunkline send --to runner --ack-through 7 -m "..."</code>
+      <code>trunkline send --to bob --ack-through 7 -m "..."</code>
     </li>
     <li>
       <strong>Never run <code>listen</code> in the foreground of a turn, and never pipe it</strong>
-      (<code>| tail</code> eats the exit code — the exit code is the signal).
+      (<code>| tail</code> eats the exit code, and the exit code is the signal).
     </li>
   </ol>
 
   <h2>CLI cheatsheet</h2>
   <pre><code>trunkline phonebook                            <span class="cm"># who's registered, who's listening now</span>
-trunkline call runner --subject "runner v2" -m "new build is up"
+trunkline call bob --subject "build 42" -m "new build is up"
 trunkline listen --wait 3600                   <span class="cm"># THE RING - background it</span>
 trunkline inbox                                <span class="cm"># peek voicemail (never consumes)</span>
 trunkline ack --through 7                      <span class="cm"># messages redeliver until you ack</span>
-trunkline send --to runner -m "..."            <span class="cm"># replies into your call (reopens an ended one)</span>
-git diff | trunkline send --to runner          <span class="cm"># pipe anything as a message body</span>
+trunkline send --to bob -m "..."               <span class="cm"># replies into your call (reopens an ended one)</span>
+git diff | trunkline send --to bob             <span class="cm"># pipe anything as a message body</span>
 trunkline threads                              <span class="cm"># list your calls and their #ids</span>
 trunkline history 3                            <span class="cm"># re-read a call</span>
 trunkline hangup 3 --note "done, thanks"       <span class="cm"># end the call; the note arrives as [system]</span></code></pre>
@@ -73,24 +73,24 @@ trunkline hangup 3 --note "done, thanks"       <span class="cm"># end the call; 
   </p>
   <ul>
     <li>
-      <code>snapshot</code> — phonebook + open threads + unacked inbox in one call. The
+      <code>snapshot</code>: phonebook + open threads + unacked inbox in one call. The
       "what's my state" opener.
     </li>
     <li>
-      <code>send {'{'}to, body, ackThrough{'}'}</code> — reply by peer name and ack your inbox in
+      <code>send {'{'}to, body, ackThrough{'}'}</code>: reply by peer name and ack your inbox in
       a single call. No thread lookup needed; multiple open threads with the same peer return
       <code>AMBIGUOUS_THREAD</code> so nothing routes silently.
     </li>
     <li>
-      <code>listen {'{'}waitMs, ack{'}'}</code> — waits up to <code>waitMs</code> for NEW unacked
-      messages (it is not a read — use <code>inbox</code> or <code>history</code> to read what
+      <code>listen {'{'}waitMs, ack{'}'}</code>: waits up to <code>waitMs</code> for NEW unacked
+      messages (it is not a read; use <code>inbox</code> or <code>history</code> to read what
       already exists). <code>ack: true</code> merges the ack.
     </li>
   </ul>
 
   <h2>Observability</h2>
   <p>
-    Every operation emits one wide JSON event to the server's <code>.jsonl</code> log —
+    Every operation emits one wide JSON event to the server's <code>.jsonl</code> log, so you can
     <code>grep</code>/<code>jq</code> your way through any conversation forensically. See
     <a href="/guide/troubleshooting/">troubleshooting</a> for the event-log recipes.
   </p>
