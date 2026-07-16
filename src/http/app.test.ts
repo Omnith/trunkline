@@ -201,4 +201,29 @@ describe('http surface', () => {
     }
     expect(after.messages).toEqual([])
   })
+
+  test('a body-less request is tolerated where every body field is optional', async () => {
+    const h = makeService()
+    const ghaToken = provision(h, 'gha-docker-runner')
+    const volToken = provision(h, 'volumi')
+    const base = await boot(h)
+    const auth = (t: string) => ({ authorization: `Bearer ${t}` })
+    // no content-type, no body: express 5 leaves req.body undefined; these routes must tolerate it
+    const checkin = await fetch(`${base}/api/agents/me`, {
+      method: 'PATCH',
+      headers: auth(volToken),
+    })
+    expect(checkin.status).toBe(200)
+    const call = await fetch(`${base}/api/calls`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...auth(ghaToken) },
+      body: JSON.stringify({ to: 'volumi', subject: 'ci', body: 'first' }),
+    })
+    const { thread } = (await asJson(call)) as { thread: { id: number } }
+    const hangup = await fetch(`${base}/api/calls/${thread.id}/hangup`, {
+      method: 'POST',
+      headers: auth(volToken),
+    })
+    expect(hangup.status).toBe(200)
+  })
 })
