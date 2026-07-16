@@ -17,13 +17,16 @@ MCP-only agent never reads).
   economics). Claude-family harnesses surface instructions to the model.
 - **G2 — `send.to`: reply by peer name in one round.** MCP `send` currently requires
   `threadId`, forcing a `threads` lookup round on any agent that only knows its peer's name.
-  `SendInput` gains `to` as an alternative to `threadId` (exactly one required): resolve to
-  the open thread with that peer, else the most recently ended one (reopen-on-send
-  semantics), else `NOT_FOUND` with a "use call to open a thread" message. Core-level, so
-  every surface gets it; the CLI's client-side `resolvePeerThread` (two HTTP rounds) is
-  replaced by the server-side resolution (one round).
-- **G3 — `listen`/`inbox` tools gain `ack: boolean` (default false).** Read+ack in one round
-  for agents accepting the same durability trade-off as CLI `listen --ack`.
+  `SendInput` gains `to` as an alternative to `threadId` (exactly one — enforced by a core
+  guard in `service.send`, the single point all surfaces share): resolve to the open
+  (TTL-effective) thread with that peer; multiple open threads → `AMBIGUOUS_THREAD` (409)
+  listing ids, preserving the CLI's existing guard; none open → the most recently ended one
+  (reopen-on-send); no history → `NOT_FOUND` steering to `call`; self-send rejected like
+  `call`. Core-level, so every surface gets it; the CLI's client-side `resolvePeerThread`
+  (two HTTP rounds) is replaced by the server-side resolution (one round).
+- **G3 — `listen` tool gains `ack: boolean` (default false).** Read+ack in one round for
+  agents accepting the same durability trade-off as CLI `listen --ack`. `inbox` stays a pure
+  peek — a cursor-advancing option would contradict its `readOnlyHint` (G6).
 - **G4 — `snapshot` tool.** Phonebook + open threads + unacked inbox in one call — the
   "what's my state" opener that today costs three rounds.
 - **G5 — result hints.** `listen`/`inbox` tool results append a `hint` field with the exact
@@ -66,12 +69,14 @@ MCP-only agent never reads).
 
 - AC1: MCP initialize response carries the instructions text (asserted via a stateless
   `handleMcpRequest` round-trip in tests).
-- AC2: `send {to}` works on all three surfaces: open-thread case, reopen-ended case,
-  no-thread `NOT_FOUND` case; `send {threadId}` unchanged; passing both/neither → 422-class
-  validation error. CLI `send --to` behavior identical to today (tests unchanged in
-  meaning), now via one HTTP round.
-- AC3: `listen {ack:true}` / `inbox {ack:true}` deliver and advance the cursor in one tool
-  call; default false preserves peek semantics.
+- AC2: `send {to}` works on all three surfaces: open-thread case (other peers excluded),
+  ambiguous-open case (`AMBIGUOUS_THREAD`), reopen-ended case, no-thread `NOT_FOUND`-with-
+  steering case, self-send rejection; `send {threadId}` unchanged; passing both/neither →
+  `VALIDATION_ERROR` from the core guard on every surface. CLI `send --to` behavior
+  preserved (contract moved to core tests; sendTo tests rewritten to pin forwarding), now
+  via one HTTP round.
+- AC3: `listen {ack:true}` delivers and advances the cursor in one tool call; default false
+  preserves current semantics; `inbox` remains peek-only.
 - AC4: `snapshot` returns `{ agents, threads, messages, cursor }` shapes consistent with the
   individual verbs.
 - AC5: read-only annotations present on the five read tools; all MCP results compact.
