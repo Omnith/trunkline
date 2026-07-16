@@ -35,13 +35,6 @@ export interface AppDeps {
   mcpHandler?: McpHandler
 }
 
-// express 4 does not catch async rejections; wrap every async handler
-const asyncH =
-  (fn: (req: Request, res: Response) => Promise<void>): RequestHandler =>
-  (req, res, next) => {
-    fn(req, res).catch(next)
-  }
-
 const agentOf = (res: Response): string => res.locals.agent as string
 
 // body-parser's oversized-payload error shape
@@ -78,25 +71,16 @@ export function buildApp(deps: AppDeps): express.Express {
     res.json({ ok: true })
   })
 
-  app.post(
-    '/api/register',
-    label('register'),
-    asyncH(async (req, res) => {
-      const input = RegisterInputSchema.parse(req.body)
-      res.status(201).json(await service.register(input, 'http'))
-    }),
-  )
+  app.post('/api/register', label('register'), async (req, res) => {
+    const input = RegisterInputSchema.parse(req.body)
+    res.status(201).json(await service.register(input, 'http'))
+  })
 
   if (deps.mcpHandler) {
     const mcpHandler = deps.mcpHandler
-    app.post(
-      '/mcp',
-      label('mcp'),
-      auth('mcp'),
-      asyncH(async (req, res) => {
-        await mcpHandler(service, agentOf(res), req, res)
-      }),
-    )
+    app.post('/mcp', label('mcp'), auth('mcp'), async (req, res) => {
+      await mcpHandler(service, agentOf(res), req, res)
+    })
     // stateless mode: no SSE stream, no sessions
     const noSession: RequestHandler = (_req, res) => {
       res.status(405).json({
@@ -112,96 +96,54 @@ export function buildApp(deps: AppDeps): express.Express {
   const api = express.Router()
   api.use(auth('http'))
 
-  api.get(
-    '/agents',
-    label('phonebook'),
-    asyncH(async (_req, res) => {
-      res.json(await service.phonebook({ agent: agentOf(res), surface: 'http' }))
-    }),
-  )
-  api.patch(
-    '/agents/me',
-    label('checkin'),
-    asyncH(async (req, res) => {
-      // express 5 leaves req.body undefined when no body was parsed; all fields optional here
-      const input = CheckinInputSchema.parse(req.body ?? {})
-      res.json(await service.checkin({ agent: agentOf(res), surface: 'http' }, input))
-    }),
-  )
-  api.post(
-    '/calls',
-    label('call'),
-    asyncH(async (req, res) => {
-      const input = CallInputSchema.parse(req.body)
-      res.status(201).json(await service.call({ agent: agentOf(res), surface: 'http' }, input))
-    }),
-  )
-  api.get(
-    '/calls',
-    label('threads'),
-    asyncH(async (req, res) => {
-      const input = ThreadsQuerySchema.parse(req.query)
-      res.json(await service.threads({ agent: agentOf(res), surface: 'http' }, input))
-    }),
-  )
-  api.post(
-    '/messages',
-    label('send'),
-    asyncH(async (req, res) => {
-      // unified send entry: full input, XOR/self-send enforced in core (surfaces as VALIDATION_ERROR)
-      const input = SendInputSchema.parse(req.body)
-      res.status(201).json(await service.send({ agent: agentOf(res), surface: 'http' }, input))
-    }),
-  )
-  api.post(
-    '/calls/:id/messages',
-    label('send'),
-    asyncH(async (req, res) => {
-      const threadId = IdParamSchema.parse(req.params.id)
-      // path threadId is authoritative; a stray body `to` is stripped like any unknown key
-      const body = SendInputSchema.omit({ threadId: true, to: true }).parse(req.body)
-      res
-        .status(201)
-        .json(await service.send({ agent: agentOf(res), surface: 'http' }, { threadId, ...body }))
-    }),
-  )
-  api.get(
-    '/calls/:id/messages',
-    label('history'),
-    asyncH(async (req, res) => {
-      const threadId = IdParamSchema.parse(req.params.id)
-      const q = HistoryQuerySchema.parse(req.query)
-      res.json(await service.history({ agent: agentOf(res), surface: 'http' }, { threadId, ...q }))
-    }),
-  )
-  api.post(
-    '/calls/:id/hangup',
-    label('hangup'),
-    asyncH(async (req, res) => {
-      const threadId = IdParamSchema.parse(req.params.id)
-      // express 5 leaves req.body undefined when no body was parsed; all fields optional here
-      const body = HangupInputSchema.omit({ threadId: true }).parse(req.body ?? {})
-      res.json(
-        await service.hangup({ agent: agentOf(res), surface: 'http' }, { threadId, ...body }),
-      )
-    }),
-  )
-  api.get(
-    '/inbox',
-    label('listen'),
-    asyncH(async (req, res) => {
-      const q = ListenQuerySchema.parse(req.query)
-      res.json(await service.listen({ agent: agentOf(res), surface: 'http' }, q))
-    }),
-  )
-  api.put(
-    '/cursor',
-    label('ack'),
-    asyncH(async (req, res) => {
-      const input = AckInputSchema.parse(req.body)
-      res.json(await service.ack({ agent: agentOf(res), surface: 'http' }, input))
-    }),
-  )
+  api.get('/agents', label('phonebook'), async (_req, res) => {
+    res.json(await service.phonebook({ agent: agentOf(res), surface: 'http' }))
+  })
+  api.patch('/agents/me', label('checkin'), async (req, res) => {
+    // express 5 leaves req.body undefined when no body was parsed; all fields optional here
+    const input = CheckinInputSchema.parse(req.body ?? {})
+    res.json(await service.checkin({ agent: agentOf(res), surface: 'http' }, input))
+  })
+  api.post('/calls', label('call'), async (req, res) => {
+    const input = CallInputSchema.parse(req.body)
+    res.status(201).json(await service.call({ agent: agentOf(res), surface: 'http' }, input))
+  })
+  api.get('/calls', label('threads'), async (req, res) => {
+    const input = ThreadsQuerySchema.parse(req.query)
+    res.json(await service.threads({ agent: agentOf(res), surface: 'http' }, input))
+  })
+  api.post('/messages', label('send'), async (req, res) => {
+    // unified send entry: full input, XOR/self-send enforced in core (surfaces as VALIDATION_ERROR)
+    const input = SendInputSchema.parse(req.body)
+    res.status(201).json(await service.send({ agent: agentOf(res), surface: 'http' }, input))
+  })
+  api.post('/calls/:id/messages', label('send'), async (req, res) => {
+    const threadId = IdParamSchema.parse(req.params.id)
+    // path threadId is authoritative; a stray body `to` is stripped like any unknown key
+    const body = SendInputSchema.omit({ threadId: true, to: true }).parse(req.body)
+    res
+      .status(201)
+      .json(await service.send({ agent: agentOf(res), surface: 'http' }, { threadId, ...body }))
+  })
+  api.get('/calls/:id/messages', label('history'), async (req, res) => {
+    const threadId = IdParamSchema.parse(req.params.id)
+    const q = HistoryQuerySchema.parse(req.query)
+    res.json(await service.history({ agent: agentOf(res), surface: 'http' }, { threadId, ...q }))
+  })
+  api.post('/calls/:id/hangup', label('hangup'), async (req, res) => {
+    const threadId = IdParamSchema.parse(req.params.id)
+    // express 5 leaves req.body undefined when no body was parsed; all fields optional here
+    const body = HangupInputSchema.omit({ threadId: true }).parse(req.body ?? {})
+    res.json(await service.hangup({ agent: agentOf(res), surface: 'http' }, { threadId, ...body }))
+  })
+  api.get('/inbox', label('listen'), async (req, res) => {
+    const q = ListenQuerySchema.parse(req.query)
+    res.json(await service.listen({ agent: agentOf(res), surface: 'http' }, q))
+  })
+  api.put('/cursor', label('ack'), async (req, res) => {
+    const input = AckInputSchema.parse(req.body)
+    res.json(await service.ack({ agent: agentOf(res), surface: 'http' }, input))
+  })
 
   app.use('/api', api)
 
