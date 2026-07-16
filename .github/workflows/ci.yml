@@ -67,9 +67,14 @@ jobs:
     timeout-minutes: 15
     strategy:
       fail-fast: false
+      # full 6-leg matrix where feedback matters (PRs); a single canary leg on
+      # main/tag pushes - rebase-merge means main's tree was almost always already
+      # matrix-tested on the PR, and the canary still catches the one edge where a
+      # server-side rebase during merge produced a never-tested tree. release.yml
+      # independently re-tests tagged trees before publishing.
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        node: [22, 24]
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
+        node: ${{ github.event_name == 'pull_request' && fromJSON('[22, 24]') || fromJSON('[22]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

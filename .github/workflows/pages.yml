@@ -5,6 +5,8 @@ on:
     paths:
       - 'site/**'
       - '.github/workflows/pages.yml'
+      # the nav version badge is read from the root package at build time
+      - 'package.json'
   # PR-time validation: build + link gate only, no deploy (site changes skip the test matrix,
   # so this is the only pre-merge check the site gets)
   pull_request:
