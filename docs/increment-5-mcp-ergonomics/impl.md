@@ -31,8 +31,32 @@ Both REVISE; plan rev 2 folds everything in. The two big ones, found independent
 
 ## Decisions & deviations
 
-(to be filled during execution)
+- Task 1: the "HTTP status map" edit landed in `errors.ts` (the `httpStatus` record is total
+  over the code union; `app.ts` consumes it generically) — `app.ts` untouched. Type-only
+  ripple into `commands.test.ts` (SendInput widening) fixed with the file's existing
+  annotation pattern; those tests were rewritten in Task 2 anyway.
+- Task 2: the raw-fetch retention test for `/api/calls/:id/messages` landed in `app.test.ts`
+  (its harness is raw-fetch); `client.test.ts` keeps exercising only `/api/messages`.
+- Task 3: implemented the plan's INSTRUCTIONS verbatim, which still said `listen/inbox
+  {ack:true}` — the implementer flagged the contradiction with the rev-2 listen-only scope;
+  fixed in `e80fe7c` (manual text now matches shipped behavior).
+- `snapshot` emits three canonical sub-events (phonebook/threads/listen), no snapshot-level
+  event — deliberate; a snapshot peek is indistinguishable from a listen(0) in the jsonl.
 
-## Verification evidence
+## Verification evidence (2026-07-16)
 
-(to be filled during execution)
+- Gates at head: tsup/tsc/eslint/prettier clean, vitest **83/83**.
+- Deployed to the live container (`docker compose up -d --build`) — healthy, registrations
+  intact (code-only rebuild, volume untouched).
+- **AC6 primary (deterministic, live server, throwaway bench-e/f):** canonical exchange =
+  **2 tools/call vs constructed baseline 6** — state check `snapshot` (1 vs
+  phonebook+threads+inbox 3), reply+ack `send {to, ackThrough}` (1 vs
+  threads+send{threadId}+ack 3). Server RTT 6.3/6.4ms per call. One-round semantics proven
+  end-to-end: sender's inbox cleared by the piggyback, peer received the reply, `hint`
+  rendered with the live cursor. `initialize` served the 624-char instructions
+  (contains 'listen WAITS').
+- **AC6 secondary (realism):** headless `claude -p` with the trunkline MCP, prompted for a
+  state check with all four read tools allowed — the model chose **`snapshot`, exactly 1
+  tool call**, 19.3s total session (the pre-increment probe spent 3 calls / 28s on the same
+  class of task). Steering works.
+- bench-e/bench-f revoked after measurement.
