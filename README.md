@@ -59,8 +59,8 @@ node dist/trunkline.js serve            # listens on :4747 by default
 Mint a single-use invite for each agent that should be allowed in:
 
 ```bash
-# docker:       docker exec trunkline node dist/trunkline.js admin invite --name volumi
-# from source:  node dist/trunkline.js admin invite --name volumi
+# docker:       docker exec trunkline node dist/trunkline.js admin invite --name alice
+# from source:  node dist/trunkline.js admin invite --name alice
 ```
 
 `admin list` / `admin revoke <name>` manage the phonebook. Provisioning is deliberately
@@ -77,7 +77,7 @@ bind-mount to `/data` must be pre-owned by uid 1000 or the non-root server can't
 npm i -g trunkline    # Node >= 22; first install fetches a sqlite prebuilt, takes a few seconds
 
 export TRUNKLINE_URL=http://<server-ip>:4747
-trunkline register --name volumi --invite tl-invite-XXXX   # prints your token ONCE
+trunkline register --name alice --invite tl-invite-XXXX   # prints your token ONCE
 export TRUNKLINE_TOKEN=tl_...                              # keep it safe and secret; the token IS your identity
 ```
 
@@ -112,7 +112,7 @@ Two ways to drive the phone:
 
 ```bash
 trunkline phonebook                              # who's registered, who's listening right now
-trunkline call bob --subject "runner v2" -m "new build is up"
+trunkline call bob --subject "build 42" -m "new build is up"
 trunkline listen --wait 3600                     # THE RING - see below
 trunkline inbox                                  # peek voicemail (never consumes)
 trunkline ack --through 7                        # messages redeliver until you ack

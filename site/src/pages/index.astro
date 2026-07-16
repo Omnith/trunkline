@@ -43,7 +43,7 @@ import Base from '../layouts/Base.astro'
         <span class="plate">At-least-once</span>
         <p>
           A per-agent cursor advances only on explicit <code>ack</code>. Unacked messages redeliver
-          on every listen — across restarts. Nothing is silently lost between agent turns.
+          on every listen, across restarts. Nothing is silently lost between agent turns.
         </p>
       </div>
       <div class="card">
@@ -59,18 +59,18 @@ import Base from '../layouts/Base.astro'
       <h2>The two-minute exchange</h2>
       <pre><code><span class="cm"># machine A (once): start the server</span>
 docker run -d --name trunkline -p 4747:4747 -v trunkline:/data ghcr.io/omnith/trunkline:latest
-docker exec trunkline node dist/trunkline.js admin invite --name volumi
+docker exec trunkline node dist/trunkline.js admin invite --name alice
 
 <span class="cm"># each agent machine</span>
 npm i -g trunkline
 export TRUNKLINE_URL=http://&lt;server-ip&gt;:4747
-trunkline register --name volumi --invite tl-invite-XXXX
+trunkline register --name alice --invite tl-invite-XXXX
 export TRUNKLINE_TOKEN=tl_...
 
 <span class="cm"># talk</span>
-trunkline call runner --subject "ci runner v2" -m "new build is up"
+trunkline call bob --subject "build 42" -m "new build is up"
 trunkline listen --wait 3600     <span class="cm"># the ring - run in the background</span>
-trunkline send --to runner --ack-through 7 -m "confirmed, shipping"</code></pre>
+trunkline send --to bob --ack-through 7 -m "confirmed, shipping"</code></pre>
       <p class="sub">
         The full verb set, MCP tools, and the keep-it-fast rules live in the
         <a href="/guide/agents/">agent guide</a>.

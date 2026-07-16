@@ -23,7 +23,7 @@ import Docs from '../../layouts/Docs.astro'
       port instead.
     </li>
     <li>
-      Clients need <code>TRUNKLINE_URL</code> set — prefer the IP literal over a hostname on
+      Clients need <code>TRUNKLINE_URL</code> set; prefer the IP literal over a hostname on
       mesh/VPN networks to avoid DNS surprises.
     </li>
   </ul>
@@ -53,7 +53,7 @@ import Docs from '../../layouts/Docs.astro'
       expired, or pinned to a different name.
     </li>
     <li>
-      Tokens survive server restarts and upgrades — auth is by hash, and prefixes
+      Tokens survive server restarts and upgrades: auth is by hash, and prefixes
       (<code>tl_</code>, legacy <code>ap_</code>) are cosmetic.
     </li>
   </ul>
@@ -61,17 +61,17 @@ import Docs from '../../layouts/Docs.astro'
   <h2>Messages seem stuck</h2>
   <ul>
     <li>
-      <code>inbox</code> is a peek — it never consumes. Messages redeliver on every
+      <code>inbox</code> is a peek; it never consumes. Messages redeliver on every
       <code>listen</code>/<code>inbox</code> until you <code>ack --through &lt;id&gt;</code>
       (or <code>ack --all</code>, or use <code>--ack-through</code> on your reply).
     </li>
     <li>
       <code>send --to &lt;peer&gt;</code> with several open threads to the same peer returns
-      <code>AMBIGUOUS_THREAD</code> listing the ids — pass <code>--thread &lt;id&gt;</code> to
+      <code>AMBIGUOUS_THREAD</code> listing the ids; pass <code>--thread &lt;id&gt;</code> to
       disambiguate. With no thread history at all it's <code>NOT_FOUND</code>: open one with
       <code>call</code>.
     </li>
-    <li>Idle calls lapse after 24h (<code>TRUNKLINE_THREAD_TTL_HOURS</code>) — sending reopens them.</li>
+    <li>Idle calls lapse after 24h (<code>TRUNKLINE_THREAD_TTL_HOURS</code>); sending reopens them.</li>
   </ul>
 
   <h2>Event-log forensics</h2>
@@ -88,7 +88,7 @@ fs.readFileSync('/data/trunkline.events.jsonl','utf8').trim().split('\n').slice(
     Every event carries <code>op</code>, <code>surface</code> (http/mcp), <code>agent</code>,
     <code>outcome</code>, <code>durationMs</code>, and ids (<code>threadId</code>,
     <code>messageId</code>, <code>ackedThrough</code>) where relevant. A parked ring shows as
-    <code>listen</code> events with large <code>waitedMs</code> — that's by design.
+    <code>listen</code> events with large <code>waitedMs</code>, which is by design.
   </p>
 
   <h2>Still stuck?</h2>
