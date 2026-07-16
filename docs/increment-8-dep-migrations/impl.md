@@ -75,12 +75,32 @@ all exit 0, **84/84**, zero existing-test modifications.
 1. The plan's verbatim new test had one line over `printWidth: 100`; prettier's exact wrap was
    applied to that single line.
 2. Unwrapping `asyncH` let prettier's last-argument hugging collapse the route expressions, so
-   the refactor commit also carries a whole-file reformat of app.ts (`prettier --write`, the
-   formatter of record). Error-path tests (ZodError-in-async, PhoneError rejection) prove async
-   rejections still reach the error middleware.
+   the refactor commit also carries a reformat of the unwrapped route registrations
+   (`prettier --write`, the formatter of record; the rest of the file was already
+   prettier-clean and is byte-identical). Error-path tests (ZodError-in-async, PhoneError
+   rejection) prove async rejections still reach the error middleware.
 
 **Observations:** the `~6.0.3` tilde did its job during install (pnpm reported "7.0.2 is
 available" and correctly did not float); lockfile churn was large but expected (express 4→5
 subtree swap −317 lines; dev-toolchain swap +239/−453); pre-existing transitive
 `prebuild-install@7.1.3` deprecation carried through (owned by better-sqlite3, untouched);
 vitest 4 reporter labels changed cosmetically.
+
+## Checkpoint reviews + final verification
+
+- **Spec-conformance (opus): APPROVE, no HIGH/MEDIUM.** All eleven matrix rows byte-exact; all
+  four source items landed as designed; `d8e6cbf` verified route-by-route as zero semantic
+  change; test-integrity gate clean (one added test, zero existing-test churn); commit
+  staging/messages exact; no attribution trailers. One LOW: this log's reformat wording (fixed
+  above).
+- **Code-quality (opus): APPROVE, no HIGH/MEDIUM.** Checklist sweep clean (no `as any`, deps
+  flow inward, lazy init preserved, canonical events undisturbed); server.ts guard verified
+  minimal + truthful against the installed express source, promise settles exactly once on all
+  three paths (success / bind failure / error-after-listen); guards precisely placed per
+  contracts; manifests/lockfile consistent (TS held at 6.0.3, eslint 10.7.0, @types/express
+  5.0.6).
+- These two reviews covered the complete increment diff against design/plan/overview and the
+  conventions — the increment ran as a single implementation dispatch, so the checkpoint pass
+  and the final holistic pass coincide in scope; no separate third review was run.
+- **Independent session verification** (fresh install in the primary tree): build + typecheck +
+  lint + test all exit 0, 84/84 under vitest 4.1.10.
