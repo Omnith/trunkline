@@ -7,11 +7,17 @@ import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
 import '../styles/global.css'
 
+import { readFileSync } from 'node:fs'
+
 interface Props {
   title: string
   description: string
 }
 const { title, description } = Astro.props
+// version comes from the root package at build time - never drifts from releases
+const VERSION = JSON.parse(
+  readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'),
+).version
 const canonical = new URL(Astro.url.pathname, Astro.site)
 const FAVICON =
   'data:image/svg+xml,' +
@@ -44,7 +50,7 @@ const FAVICON =
         <a href="https://github.com/Omnith/trunkline">GitHub</a>
         <a href="https://www.npmjs.com/package/trunkline">npm</a>
         <span class="right">
-          <span class="ver">v0.1.0</span>
+          <span class="ver">v{VERSION}</span>
           <button class="toggle" id="theme-toggle" aria-label="Switch between dark and light theme"
           ></button>
         </span>

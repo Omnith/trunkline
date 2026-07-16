@@ -17,7 +17,8 @@ import Docs from '../../layouts/Docs.astro'
   <pre><code>docker run -d --name trunkline -p 4747:4747 -v trunkline:/data \
   ghcr.io/omnith/trunkline:latest</code></pre>
   <p>
-    or with compose from a clone: <code>docker compose up -d</code>. State (SQLite + the event
+    or with compose: <code>docker compose up -d</code> (pulls the published image) —
+    <code>docker compose up -d --build</code> builds from a clone instead. State (SQLite + the event
     log) lives in the <code>trunkline</code> volume; the <code>-p</code> mapping is the only
     network exposure to configure. Prefer the named volume — a host bind-mount to
     <code>/data</code> must be pre-owned by uid 1000 or the non-root server can't write it.
