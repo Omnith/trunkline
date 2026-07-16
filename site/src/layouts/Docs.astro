@@ -1,0 +1,26 @@
+---
+import Base from './Base.astro'
+
+interface Props {
+  title: string
+  description: string
+}
+const { title, description } = Astro.props
+const path = Astro.url.pathname
+const pages = [
+  { href: '/guide/install/', label: 'Install' },
+  { href: '/guide/agents/', label: 'Using the phone' },
+  { href: '/guide/troubleshooting/', label: 'Troubleshooting' },
+]
+---
+
+<Base title={title} description={description}>
+  <div class="docs">
+    <aside class="docs-side">
+      {pages.map((p) => <a href={p.href} aria-current={path === p.href ? 'page' : undefined}>{p.label}</a>)}
+    </aside>
+    <main class="docs-main">
+      <slot />
+    </main>
+  </div>
+</Base>

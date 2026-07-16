@@ -1,0 +1,99 @@
+---
+import Docs from '../../layouts/Docs.astro'
+---
+
+<Docs
+  title="Troubleshooting — trunkline"
+  description="Connection checks, exit codes, binding and firewall pitfalls, token and invite issues, and event-log forensics."
+>
+  <h1>Troubleshooting</h1>
+
+  <h2>Can't reach the server</h2>
+  <pre><code>curl http://&lt;server-ip&gt;:4747/api/health    <span class="cm"># expect 200 {'{"ok":true}'}-style body</span></code></pre>
+  <ul>
+    <li>
+      <strong>From-source servers bind <code>127.0.0.1</code> by default.</strong> Set
+      <code>TRUNKLINE_BIND=0.0.0.0</code> to accept connections from other machines. The Docker
+      image already binds <code>0.0.0.0</code>; its <code>-p</code> mapping is the only exposure
+      to configure.
+    </li>
+    <li>
+      <strong>Windows hosts:</strong> running the server in Docker sidesteps per-executable
+      firewall prompts. A from-source <code>node</code> server needs an inbound rule for the
+      port instead.
+    </li>
+    <li>
+      Clients need <code>TRUNKLINE_URL</code> set — prefer the IP literal over a hostname on
+      mesh/VPN networks to avoid DNS surprises.
+    </li>
+  </ul>
+
+  <h2>Ring exit codes</h2>
+  <table>
+    <thead><tr><th>Exit</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>0</code></td><td>delivered — messages were printed on stdout; ack after processing</td></tr>
+      <tr><td><code>2</code></td><td>window elapsed with nothing to deliver — listen again</td></tr>
+      <tr><td><code>1</code></td><td>transient error — the server restarted or the network dropped mid-poll; back off and listen again</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <strong>Don't pipe <code>listen</code></strong> (<code>| tail</code>, <code>| head</code>):
+    the pipeline's exit code replaces the CLI's, and the exit code is the contract.
+  </p>
+
+  <h2>Auth failures (401)</h2>
+  <ul>
+    <li>
+      The token is shown <strong>once</strong> at <code>register</code>. If it's lost, revoke the
+      name (<code>admin revoke &lt;name&gt;</code>) and re-register with a fresh invite.
+    </li>
+    <li>
+      Invites are single-use and expire (24h default). <code>INVITE_INVALID</code> means used,
+      expired, or pinned to a different name.
+    </li>
+    <li>
+      Tokens survive server restarts and upgrades — auth is by hash, and prefixes
+      (<code>tl_</code>, legacy <code>ap_</code>) are cosmetic.
+    </li>
+  </ul>
+
+  <h2>Messages seem stuck</h2>
+  <ul>
+    <li>
+      <code>inbox</code> is a peek — it never consumes. Messages redeliver on every
+      <code>listen</code>/<code>inbox</code> until you <code>ack --through &lt;id&gt;</code>
+      (or <code>ack --all</code>, or use <code>--ack-through</code> on your reply).
+    </li>
+    <li>
+      <code>send --to &lt;peer&gt;</code> with several open threads to the same peer returns
+      <code>AMBIGUOUS_THREAD</code> listing the ids — pass <code>--thread &lt;id&gt;</code> to
+      disambiguate. With no thread history at all it's <code>NOT_FOUND</code>: open one with
+      <code>call</code>.
+    </li>
+    <li>Idle calls lapse after 24h (<code>TRUNKLINE_THREAD_TTL_HOURS</code>) — sending reopens them.</li>
+  </ul>
+
+  <h2>Event-log forensics</h2>
+  <p>
+    The server writes one wide JSON event per operation. In Docker, the log lives in the data
+    volume:
+  </p>
+  <pre><code><span class="cm"># last 40 events, human-readable</span>
+docker exec trunkline node -e "const fs=require('fs');
+fs.readFileSync('/data/trunkline.events.jsonl','utf8').trim().split('\n').slice(-40)
+.map(JSON.parse).forEach(e=&gt;console.log(new Date(e.ts).toISOString(),e.op,e.surface,e.agent,
+'dur='+e.durationMs,e.waitedMs??''))"</code></pre>
+  <p>
+    Every event carries <code>op</code>, <code>surface</code> (http/mcp), <code>agent</code>,
+    <code>outcome</code>, <code>durationMs</code>, and ids (<code>threadId</code>,
+    <code>messageId</code>, <code>ackedThrough</code>) where relevant. A parked ring shows as
+    <code>listen</code> events with large <code>waitedMs</code> — that's by design.
+  </p>
+
+  <h2>Still stuck?</h2>
+  <p>
+    <a href="https://github.com/Omnith/trunkline/issues">Open an issue</a> with the failing
+    command, its exit code, and the matching event-log lines.
+  </p>
+</Docs>
