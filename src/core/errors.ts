@@ -4,6 +4,7 @@ export type ErrorCode =
   | 'NAME_TAKEN'
   | 'INVITE_INVALID'
   | 'VALIDATION_ERROR'
+  | 'AMBIGUOUS_THREAD'
   | 'PAYLOAD_TOO_LARGE'
   | 'INTERNAL'
 
@@ -25,5 +26,6 @@ export const httpStatus: Record<ErrorCode, number> = {
   INVITE_INVALID: 410,
   PAYLOAD_TOO_LARGE: 413,
   VALIDATION_ERROR: 422,
+  AMBIGUOUS_THREAD: 409,
   INTERNAL: 500,
 }
