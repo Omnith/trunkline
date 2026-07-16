@@ -13,7 +13,55 @@ concurrency:
 permissions: {}
 
 jobs:
+  # cheap first pass: on pull_request, decide whether any *material* (code) file
+  # changed. docs-only PRs (README, docs/**, assets/**, LICENSE, **/*.md, site/**)
+  # skip the test matrix and docker smoke below. required-check-safe: skipped
+  # jobs still REPORT (as skipped), unlike an on.paths-ignore filter which would
+  # leave a required status check pending forever and block the PR.
+  changes:
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Detect material (code) changes
+        id: filter
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # non-pull_request events (push to main, tag pushes) always run everything
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "event=${{ github.event_name }}: running full pipeline"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # non-material paths: docs, assets, license, markdown anywhere, and
+          # site/** (the pages workflow owns site/, so it is non-material here)
+          non_material='(^docs/|^assets/|^site/|^LICENSE$|\.md$)'
+          changed="$(git diff --name-only "$BASE...$HEAD")"
+          echo "changed files:"
+          printf '%s\n' "$changed"
+          material="$(printf '%s\n' "$changed" | grep -vE "$non_material" || true)"
+          if [ -n "$material" ]; then
+            echo "material (code) changes detected:"
+            printf '%s\n' "$material"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs-only PR: skipping test matrix + docker smoke"
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
+    needs: changes
+    # run on any non-PR event (push/tag) or when a PR touched material files
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     permissions:
       contents: read
     timeout-minutes: 15
@@ -42,7 +90,10 @@ jobs:
       - run: pnpm test
 
   docker:
-    needs: test
+    needs: [test, changes]
+    # mirror the test gate so a docs-only PR skips the smoke build too; a failed
+    # test still skips docker (a custom if without always() keeps that default).
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
