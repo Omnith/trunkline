@@ -38,7 +38,7 @@ spellings; prefer relying on the harness's own exit reporting. Commit messages:
 ```diff
    "engines": {
 -    "node": ">=22"
-+    "node": ">=22.13.0"
++    "node": ">=22.12.0"
    },
 ```
 
@@ -70,13 +70,15 @@ Expected: lockfile updates; **no peer-dependency warnings** (the SDK 1.29.0 peer
 - [ ] **Step 3: Build + typecheck under the new prod set**
 
 Run: `corepack pnpm build` then `corepack pnpm typecheck`
-Expected: both exit 0. (@types/express 5 kept source-compatible for our usage — `Request`,
-`Response`, `NextFunction`, `RequestHandler`, `express.Express`, `res.locals`.)
+Expected: both exit 0. If typecheck fails, the prime suspect is the @types/express 4→5 type
+surface (newly generic `Request`/`Response`, `req.query` typing, `res.locals`) — that is the
+one empirical risk in this step; report the exact errors rather than casting around them.
 
 - [ ] **Step 4: Run the suite — baseline under express 5 / zod 4 / commander 15**
 
 Run: `corepack pnpm test`
-Expected: **83/83 pass.** Every existing test sends JSON bodies with content-type, so the
+Expected: **full suite green** (83 tests at time of writing — the gate is "all pass", not the
+integer). Every existing test sends JSON bodies with content-type, so the
 express-5 `req.body === undefined` change should not surface here. If ANY test fails, stop and
 root-cause per the header rule; failures outside body-less/`req.body` semantics are
 disqualifying evidence against the design and must be reported, not patched around.
@@ -125,8 +127,9 @@ as an explicit contract.
 - [ ] **Step 2: Run it to verify it fails for the right reason**
 
 Run: `corepack pnpm vitest run src/http/app.test.ts -t "body-less"`
-Expected: FAIL — both fetches return 422 (ZodError from `parse(undefined)`), proving express 5
-dropped the tolerance.
+Expected: FAIL — the checkin assertion fails with 422 (ZodError from `parse(undefined)`; vitest
+stops at the first failing expect, so the hangup fetch never runs), proving express 5 dropped
+the tolerance.
 
 - [ ] **Step 3: Minimal implementation — guard the two all-optional-body routes**
 
@@ -152,7 +155,7 @@ Routes with required body fields (register, call, send) get NO guard — `parse(
 - [ ] **Step 4: Run the test to verify it passes, then the full suite**
 
 Run: `corepack pnpm vitest run src/http/app.test.ts -t "body-less"` → PASS
-Run: `corepack pnpm test` → 84/84 pass, zero modified existing tests.
+Run: `corepack pnpm test` → full suite green (now +1 test), zero modified existing tests.
 
 ### Task 3: Swap the deprecated `err.flatten()` for `z.flattenError(err)`
 
@@ -181,15 +184,17 @@ change.
 - [ ] **Step 2: Verify**
 
 Run: `corepack pnpm typecheck` then `corepack pnpm test`
-Expected: exit 0; 84/84 pass (the validation-failure test at `src/http/app.test.ts:73` exercises
-this exact path).
+Expected: exit 0; full suite green (the validation-failure test at `src/http/app.test.ts:73`
+reaches the 422 handler; it asserts the error code, not the `details` shape — shape equivalence
+rests on the probe evidence in design.md).
 
 ### Task 4: Commit phase 1a (bumps + compat)
 
-- [ ] **Step 1: Lint before committing**
+- [ ] **Step 1: Build + lint before committing**
 
-Run: `corepack pnpm lint`
-Expected: exit 0 (eslint 9 + prettier are still the installed dev toolchain in this phase).
+Run: `corepack pnpm build` then `corepack pnpm lint`
+Expected: both exit 0 (build re-verified after the app.ts edits; eslint 9 + prettier are still
+the installed dev toolchain in this phase).
 
 - [ ] **Step 2: Commit**
 
@@ -208,16 +213,18 @@ dead weight. **No test may change in this task** — if one fails, the refactor 
   checkin, calls POST, calls GET, messages POST, calls/:id/messages POST, history GET, hangup,
   inbox, cursor)
 
-- [ ] **Step 1: Pre-count the closers** (guards the mechanical replace)
+- [ ] **Step 1: Pre-count the closers** (guards the unwrap)
 
-The 12 wrapper closers all sit on bare lines (whitespace + `}),` and nothing else). One more
-`}),` exists mid-line inside the hangup route's `res.json(await service.hangup(…, { threadId,
-...body }),)` argument — a blind replace-all of `}),` would corrupt it into a syntax error, so
-target bare lines only.
+The 12 wrapper closers all sit on bare lines (whitespace + `}),` and nothing else) — 11 of them
+4-space-indented, and ONE 6-space-indented (the `/mcp` route, nested inside
+`if (deps.mcpHandler)`). One more `}),` exists mid-line inside the hangup route's
+`res.json(await service.hangup(…, { threadId, ...body }),)` argument — that one must NOT be
+touched. Use `[[:space:]]`, not `\s` — GNU grep on Git Bash does not honor `\s` and would
+report 0.
 
-Run: `grep -c "^\s*}),$" src/http/app.ts`
-Expected: exactly 12. If not 12, enumerate with `grep -n "^\s*}),$" src/http/app.ts` and unwrap
-site-by-site with unique surrounding context instead of replace-all.
+Run: `grep -n "^[[:space:]]*}),$" src/http/app.ts`
+Expected: exactly 12 line numbers. If not 12, STOP and reconcile against the file before
+editing anything.
 
 - [ ] **Step 2: Delete the wrapper definition**
 
@@ -232,12 +239,20 @@ const asyncH =
   }
 ```
 
-- [ ] **Step 3: Unwrap all 12 sites** (three uniform textual replacements, replace-all)
+- [ ] **Step 3: Unwrap all 12 sites**
+
+Openers first — these two substring replace-alls are safe (the wrapped-arrow text appears
+nowhere else):
 
 - `asyncH(async (req, res) => {` → `async (req, res) => {` (11 sites)
 - `asyncH(async (_req, res) => {` → `async (_req, res) => {` (1 site — GET /agents)
-- the 12 BARE closer lines from Step 1: `    }),` → `    },` (preserve indentation; do NOT touch
-  the mid-line `}),` inside the hangup `res.json(...)` call)
+
+Closers site-by-site (the PRIMARY path — do not attempt a whole-file replace-all on `}),`; the
+12 bare closers differ in indentation, 11 at 4 spaces and the `/mcp` one at 6, and the 13th
+mid-line `}),` in the hangup `res.json(...)` must survive): walk the 12 line numbers from
+Step 1 top to bottom and change each bare `}),` to `},`, preserving that line's indentation.
+Use unique surrounding context (the route's last body line) when editing, since the closer
+lines themselves are identical.
 
 Example, register route, complete before/after:
 
@@ -271,15 +286,17 @@ after the wrapper's deletion, remove exactly the now-unused names (typecheck/lin
 Run: `grep -n "asyncH" src/http/app.ts`
 Expected: no matches.
 Run: `corepack pnpm typecheck` then `corepack pnpm lint` then `corepack pnpm test`
-Expected: all exit 0; 84/84 pass with zero test-file changes. The domain-error and
-validation-error tests (`app.test.ts:73`, `:111`, `:124`) prove async rejections still reach the
-error middleware.
+Expected: all exit 0; full suite green with zero test-file changes. The validation-error and
+domain-error tests (`app.test.ts:73` — ZodError thrown inside an async handler — and `:124` —
+an awaited service call rejecting with a PhoneError) prove async rejections still reach the
+error middleware. (The 413 test at `:111` fails upstream in the body parser and never touched
+`asyncH`, so it is not evidence here.)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/http/app.ts
-git commit -m "refactor(src:http): drop asyncH - express 5 forwards async rejections natively"
+git commit -m "refactor(http): drop asyncH - express 5 forwards async rejections natively"
 ```
 
 ### Task 6: Phase 2 — bump the dev toolchain
@@ -322,7 +339,7 @@ its `@types/node` peer `^20 || ^22 || >=24` is satisfied by 26).
 - [ ] **Step 3: Full verify — investigation predicts zero config changes**
 
 Run: `corepack pnpm build` then `corepack pnpm typecheck` then `corepack pnpm lint` then `corepack pnpm test`
-Expected: all exit 0; 84/84 pass. `vitest.config.ts`, `eslint.config.js`, `tsconfig.json`
+Expected: all exit 0; full suite green. `vitest.config.ts`, `eslint.config.js`, `tsconfig.json`
 untouched. If lint throws `Cannot read properties of undefined (reading 'Cjs')`, typescript
 resolved outside 6.0.x — re-check Step 1's tilde.
 
@@ -338,12 +355,22 @@ git commit -m "build(deps-dev): eslint 10, vitest 4, types/node 26, typescript ~
 **Files:**
 - Modify: `README.md:76`
 
-- [ ] **Step 1: Update the known mention**
+- [ ] **Step 1: Update the known mention** (runtime floor = commander 15's `>=22.12.0`)
 
 ```diff
 -npm i -g trunkline    # Node >= 22; first install fetches a sqlite prebuilt, takes a few seconds
-+npm i -g trunkline    # Node >= 22.13; first install fetches a sqlite prebuilt, takes a few seconds
++npm i -g trunkline    # Node >= 22.12; first install fetches a sqlite prebuilt, takes a few seconds
 ```
+
+- [ ] **Step 1b: Document the dev-only floor** — in the same dev/from-source section of the
+README (adjacent to the `corepack enable` line at README.md:88), add one brief comment line:
+
+```
+# dev tooling (eslint 10) additionally needs Node 22.13+ on the 22.x line
+```
+
+This keeps the published `engines` runtime-honest while contributors still learn the real
+toolchain floor (gate finding M1).
 
 - [ ] **Step 2: Sweep for any other floor mentions**
 
@@ -356,7 +383,7 @@ supported version. `Dockerfile` needs nothing (`node:22-slim` floats ≥22.13).
 
 ```bash
 git add README.md
-git commit -m "docs: node floor 22.13 (commander 15 runtime, eslint 10 dev)"
+git commit -m "docs: node runtime floor 22.12, dev floor 22.13"
 ```
 
 (Include `site/` files in the add only if Step 2 changed any.)

@@ -46,7 +46,10 @@ behavior points to handle: (1) express 5 forwards async handler rejections nativ
 when no body parser matched, so a body-less POST to an all-optional-body endpoint (checkin,
 hangup) would flip from 200 to 422. The v5 default query-parser change ("extended"→"simple")
 is irrelevant to our flat query schemas; body-parser 2's `entity.too.large` shape is covered
-by the existing 413 test.
+by the existing 413 test. The `/mcp` route was considered: valid MCP traffic always carries
+`content-type: application/json`, so `express.json()` parses it identically to v4; the only
+delta is a no-/wrong-content-type POST, where the SDK transport's own content-type check
+rejects with 415 either way.
 
 **commander 14→15** (inline analysis of `src/cli/index.ts`): v15 is ESM-only (repo is pure ESM —
 `"type": "module"`, tsup `format: ['esm']`) and requires node ≥22.12. Our API surface
@@ -77,7 +80,7 @@ behavioral break).
 | eslint | ^9.30.0 | **^10.6.0** | zero config changes needed |
 | vitest | ^3.2.0 | **^4.1.10** | zero config changes needed; no typescript peer |
 | @types/node | ^20.19.0 | **^26.1.1** | satisfied vitest's `>=24` types peer; typecheck green |
-| engines.node | >=22 | **>=22.13.0** | commander 15 needs ≥22.12 (runtime); eslint 10 needs ^22.13 on the 22 line (dev); one floor covers both |
+| engines.node | >=22 | **>=22.12.0** | commander 15's runtime floor. The dev-only floor (eslint 10 needs ^22.13 on the 22 line) is documented in the README dev section, NOT baked into the published runtime contract — consumers never install eslint |
 
 Not changed: tsup ^8.5.0, prettier ^3.6.0, better-sqlite3 ^12.2.0 (not in either PR).
 Dockerfile needs nothing — `node:22-slim` floats to current 22.x (≥22.13).
@@ -121,7 +124,9 @@ after each phase commit.
 
 ## Acceptance criteria
 
-1. Both phases individually green: build + typecheck + lint + 83/83 tests, no peer warnings.
+1. Both phases individually green: build + typecheck + lint + full suite passing, no peer
+   warnings. (Suite is 83 tests at time of writing, +1 new — the gate is "all green, zero
+   existing-test edits", not the exact integer.)
 2. No test-file modifications except the one new body-tolerance test.
 3. `asyncH` gone; error wire shapes unchanged (existing error-path tests prove it).
 4. CI fully green on the PR (matrix + docker smoke + CodeQL).
@@ -131,8 +136,9 @@ after each phase commit.
 
 ## Risks & mitigations
 
-- **Express 5 latent path/parser behavior** not visible to static analysis → the behavior suite
-  plus the docker CI smoke exercise every route; any drift fails loud.
+- **Express 5 latent path/parser behavior** not visible to static analysis → the vitest
+  behavior suite exercises every route and fails loud on drift (the docker CI smoke only covers
+  boot + health + an admin CLI path — it is not route coverage).
 - **Zod error-text delta** reaches HTTP clients in `details` message strings → structure is
   unchanged; no known consumer string-matches. Noted in impl.md as an observable-but-benign
   wire delta.
