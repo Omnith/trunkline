@@ -52,6 +52,7 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck && pnpm run lint && pnpm test
+      - run: npm install -g npm@latest # trusted publishing needs npm >= 11.5.1; node22 bundles 10.x (plan-gate HIGH-1)
       - run: npm publish --provenance --access public
 ```
 
@@ -62,7 +63,10 @@ jobs:
 
 ### Task 3: README launch touches
 
-- Banner: `src="assets/banner.svg"` → `src="https://raw.githubusercontent.com/Omnith/trunkline/main/assets/banner.svg"` (npmjs renders the README without repo files).
+- Banner (plan-gate MED-1: npmjs SVG rendering is unreliable): render `assets/banner.png`
+  from the SVG (committed), README `src` → absolute
+  `https://raw.githubusercontent.com/Omnith/trunkline/main/assets/banner.png` — renders on
+  both GitHub and npmjs; 404s only until the repo goes public (sequencing note in impl.md).
 - Private-registry note → public pull one-liner.
 - Client install section: lead with `npm i -g trunkline` (or `npx trunkline`), keep the clone+build path labeled "from source (dev)".
 - Commit: `docs: npm install path, public image pull, absolute banner for npmjs render`
